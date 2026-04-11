@@ -76,6 +76,8 @@ pub enum Keyword {
     Begin,
     Block,
     Case,
+    Else,
+    Elsif,
     End,
     Entity,
     For,
@@ -88,6 +90,8 @@ pub enum Keyword {
     Procedure,
     Process,
     Record,
+    Then,
+    When,
     While,
 }
 
@@ -118,6 +122,8 @@ fn classify_ident(s: &str) -> Option<TokenKind> {
         b"begin" => TokenKind::Keyword(Keyword::Begin),
         b"block" => TokenKind::Keyword(Keyword::Block),
         b"case" => TokenKind::Keyword(Keyword::Case),
+        b"else" => TokenKind::Keyword(Keyword::Else),
+        b"elsif" => TokenKind::Keyword(Keyword::Elsif),
         b"end" => TokenKind::Keyword(Keyword::End),
         b"entity" => TokenKind::Keyword(Keyword::Entity),
         b"for" => TokenKind::Keyword(Keyword::For),
@@ -130,6 +136,8 @@ fn classify_ident(s: &str) -> Option<TokenKind> {
         b"procedure" => TokenKind::Keyword(Keyword::Procedure),
         b"process" => TokenKind::Keyword(Keyword::Process),
         b"record" => TokenKind::Keyword(Keyword::Record),
+        b"then" => TokenKind::Keyword(Keyword::Then),
+        b"when" => TokenKind::Keyword(Keyword::When),
         b"while" => TokenKind::Keyword(Keyword::While),
 
         // Remaining VHDL-2008 reserved words. These are not tracked by
@@ -157,8 +165,6 @@ fn classify_ident(s: &str) -> Option<TokenKind> {
         | b"default"
         | b"disconnect"
         | b"downto"
-        | b"else"
-        | b"elsif"
         | b"exit"
         | b"fairness"
         | b"file"
@@ -216,7 +222,6 @@ fn classify_ident(s: &str) -> Option<TokenKind> {
         | b"srl"
         | b"strong"
         | b"subtype"
-        | b"then"
         | b"to"
         | b"transport"
         | b"type"
@@ -229,7 +234,6 @@ fn classify_ident(s: &str) -> Option<TokenKind> {
         | b"vprop"
         | b"vunit"
         | b"wait"
-        | b"when"
         | b"with"
         | b"xnor"
         | b"xor" => TokenKind::Reserved,
@@ -651,7 +655,11 @@ mod tests {
         let ks = kinds("when '0' =>");
         assert_eq!(
             ks,
-            vec![TokenKind::Reserved, TokenKind::Char, TokenKind::Arrow]
+            vec![
+                TokenKind::Keyword(Keyword::When),
+                TokenKind::Char,
+                TokenKind::Arrow
+            ]
         );
     }
 

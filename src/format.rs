@@ -1,22 +1,38 @@
-//! Formatter passes that operate on the token stream from `lexer`.
+//! Formatter pipeline.
 //!
-//! Today this module exposes a single pass — process-label insertion —
-//! which is the smallest useful thing hdlfmtr can do that vsg refuses to.
-//! As hdlfmtr grows, additional passes (alignment, indent, comment
-//! reflow, full pretty-printing) will be added here, with each pass
-//! consuming and producing the same token stream.
+//! `format` runs each pass in order against the source, re-tokenizing
+//! between passes that change byte content. Today the pipeline is:
+//!
+//!   1. process-label insertion (vsg `process_016` / `process_018`)
+//!   2. keyword case folding
+//!   3. indent normalization
+//!   4. trailing-whitespace removal
+//!   5. final-newline ensuring
+//!
+//! Each pass is independent and consumes the source as a string. The
+//! re-tokenize cost is negligible at the file sizes we care about and
+//! it keeps the architecture trivially understandable; we can swap to
+//! a single shared token stream when profiling tells us to.
 
+use crate::config::{Config, KeywordCase};
+use crate::indent::normalize_indent;
 use crate::lexer::{Keyword, Token, TokenKind, tokenize};
 
-/// Format a VHDL source string.
-///
-/// Currently runs the process-label insertion pass and returns the
-/// rewritten source. Future revisions will run a full pretty-printer;
-/// the public signature is intentionally minimal so that callers do
-/// not need to change when the implementation grows.
-pub fn format(src: &str) -> Result<String, FormatError> {
-    let tokens = tokenize(src);
-    Ok(insert_process_labels(src, &tokens))
+/// Format a VHDL source string with the given config.
+pub fn format(src: &str, cfg: &Config) -> Result<String, FormatError> {
+    // Pass 1: insert labels.
+    let after_labels = {
+        let tokens = tokenize(src);
+        insert_process_labels(src, &tokens)
+    };
+    // Pass 2: keyword case.
+    let after_case = fold_keyword_case(&after_labels, cfg);
+    // Pass 3: indent.
+    let after_indent = normalize_indent(&after_case, cfg);
+    // Pass 4: trim trailing whitespace.
+    let after_trim = trim_trailing_whitespace(&after_indent);
+    // Pass 5: ensure exactly one trailing newline.
+    Ok(ensure_final_newline(&after_trim))
 }
 
 /// Errors returned from `format`. Currently uninhabited — every input
@@ -119,6 +135,75 @@ struct Edit {
     text: String,
 }
 
+// ───────────────────────── case folding ─────────────────────────
+
+/// Rewrite the bytes of every Keyword(_) and Reserved token to match
+/// `cfg.keyword_case`. Identifiers are never touched.
+fn fold_keyword_case(src: &str, cfg: &Config) -> String {
+    if cfg.keyword_case == KeywordCase::Preserve {
+        return src.to_string();
+    }
+    let tokens = tokenize(src);
+    let mut out = String::with_capacity(src.len());
+    let mut cursor = 0;
+    for tok in &tokens {
+        if matches!(tok.kind, TokenKind::Keyword(_) | TokenKind::Reserved) {
+            out.push_str(&src[cursor..tok.start]);
+            let original = tok.text(src);
+            match cfg.keyword_case {
+                KeywordCase::Lower => {
+                    for b in original.bytes() {
+                        out.push(b.to_ascii_lowercase() as char);
+                    }
+                }
+                KeywordCase::Upper => {
+                    for b in original.bytes() {
+                        out.push(b.to_ascii_uppercase() as char);
+                    }
+                }
+                KeywordCase::Preserve => unreachable!(),
+            }
+            cursor = tok.end;
+        }
+    }
+    out.push_str(&src[cursor..]);
+    out
+}
+
+// ───────────────────── whitespace housekeeping ─────────────────────
+
+/// Strip trailing horizontal whitespace from every line. Newlines and
+/// blank lines are preserved.
+fn trim_trailing_whitespace(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    for line in src.split_inclusive('\n') {
+        // Separate the line body from its trailing newline (if any).
+        let (body, nl) = match line.strip_suffix('\n') {
+            Some(b) => (b, "\n"),
+            None => (line, ""),
+        };
+        let trimmed = body.trim_end_matches([' ', '\t']);
+        out.push_str(trimmed);
+        out.push_str(nl);
+    }
+    out
+}
+
+/// Ensure the source ends with exactly one newline. Empty input stays
+/// empty (no spurious newline added).
+fn ensure_final_newline(src: &str) -> String {
+    if src.is_empty() {
+        return String::new();
+    }
+    let trimmed = src.trim_end_matches('\n');
+    let mut out = String::with_capacity(trimmed.len() + 1);
+    out.push_str(trimmed);
+    out.push('\n');
+    out
+}
+
+// ───────────────────────── helpers ─────────────────────────
+
 /// Index of the previous non-trivia token before `i`, if any.
 fn previous_significant(tokens: &[Token], i: usize) -> Option<usize> {
     (0..i).rev().find(|&j| !tokens[j].is_trivia())
@@ -160,6 +245,18 @@ fn find_end_process_insertion_point(tokens: &[Token], proc_idx: usize) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{IndentStyle, KeywordCase};
+
+    /// Config that disables every pass except label insertion. Used by
+    /// the existing label-pass tests so changes to indent / case
+    /// passes can never break them.
+    fn labels_only() -> Config {
+        Config {
+            indent_style: IndentStyle::Preserve,
+            indent_width: 4,
+            keyword_case: KeywordCase::Preserve,
+        }
+    }
 
     #[test]
     fn unlabeled_process_gets_label() {
@@ -173,7 +270,7 @@ begin
   end process;
 end rtl;
 ";
-        let out = format(src).unwrap();
+        let out = format(src, &labels_only()).unwrap();
         assert!(out.contains("u_process_1 : process"), "head label missing:\n{out}");
         assert!(
             out.contains("end process u_process_1;"),
@@ -191,7 +288,7 @@ begin
   end process my_proc;
 end rtl;
 ";
-        let out = format(src).unwrap();
+        let out = format(src, &labels_only()).unwrap();
         assert_eq!(out, src);
     }
 
@@ -208,7 +305,7 @@ begin
   end process;
 end rtl;
 ";
-        let out = format(src).unwrap();
+        let out = format(src, &labels_only()).unwrap();
         assert!(out.contains("u_process_1 : process"));
         assert!(out.contains("u_process_2 : process"));
         assert!(out.contains("end process u_process_1;"));
@@ -225,7 +322,7 @@ begin
   END PROCESS;
 end rtl;
 ";
-        let out = format(src).unwrap();
+        let out = format(src, &labels_only()).unwrap();
         assert!(out.contains("u_process_1 : PROCESS"));
         assert!(out.contains("END PROCESS u_process_1;"));
     }
@@ -241,7 +338,7 @@ begin
   end process;
 end rtl;
 ";
-        let out = format(src).unwrap();
+        let out = format(src, &labels_only()).unwrap();
         // Two occurrences total: one at head, one at tail. Three would
         // mean we mistakenly labeled the comment.
         assert_eq!(out.matches("u_process_1").count(), 2, "got:\n{out}");
@@ -258,7 +355,7 @@ begin
   end process;
 end rtl;
 ";
-        let out = format(src).unwrap();
+        let out = format(src, &labels_only()).unwrap();
         assert_eq!(out.matches("u_process_1").count(), 2, "got:\n{out}");
     }
 
@@ -276,7 +373,7 @@ begin
   end process;
 end rtl;
 ";
-        let out = format(src).unwrap();
+        let out = format(src, &labels_only()).unwrap();
         assert!(out.contains("end process u_process_1;"));
         // The inner `end if`s must remain untouched.
         assert_eq!(out.matches("end if;").count(), 2);
@@ -298,7 +395,7 @@ begin
   end process sync;
 end rtl;
 ";
-        let out = format(src).unwrap();
+        let out = format(src, &labels_only()).unwrap();
         assert_eq!(out, src);
     }
 }

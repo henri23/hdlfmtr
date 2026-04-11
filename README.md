@@ -10,23 +10,33 @@ null-ls, efm-langserver, ALE, VS Code formatters).
 
 ## Status — honest scope
 
-`hdlfmtr` is brand new. Today it does **one** thing well, and complements
-existing VHDL tooling rather than replacing it:
+`hdlfmtr` is young but already useful. The current pipeline runs the
+following passes in order:
 
-- **Inserts placeholder labels on unlabeled `process` statements.**
-  This is the case that VSG's `process_016` and `process_018` rules
-  flag as errors but refuse to auto-fix, which causes editor
-  format-on-save flows to silently drop the formatter's output. hdlfmtr
-  handles it correctly: it finds each unlabeled process, generates a
-  fresh `u_process_N` name, and inserts it on both the head and the
-  matching `end process`.
+1. **Process-label insertion.** Finds unlabeled `process` statements
+   and adds a synthetic `u_process_N` to both the head and the
+   matching `end process`. This is the case VSG's `process_016` /
+   `process_018` rules flag as errors but refuse to auto-fix.
+2. **Keyword case folding.** Reserved words become lowercase by
+   default; configurable to upper or preserve. Identifiers are never
+   touched.
+3. **Indent normalization.** Tabs by default, configurable to spaces.
+   Stack-based depth tracking handles entity / architecture / package
+   / process / function / procedure / if-then-elsif-else / for-loop /
+   while-loop / case / record / block / generate, plus multi-line
+   parentheses for port and generic lists.
+4. **Trailing-whitespace removal.** Always on.
+5. **Final-newline ensuring.** Always on; the file ends with exactly
+   one `\n`.
 
-Everything else in the file is preserved byte-for-byte.
+What is intentionally **not yet** done: port-list colon alignment,
+keyword-case-aware predefined identifier folding (`std_logic` etc),
+case-statement `when` indenting, library and use-clause sorting,
+Wadler-style line-width-aware pretty printing. These are on the
+roadmap below.
 
-The roadmap below lists the passes that come next. The intent is for
-hdlfmtr to grow into a full pretty-printer, but each release should
-deliver real value at its current size — no six-month parser refactor
-with nothing runnable in the middle.
+Each release ships value at its current size — no six-month parser
+refactor with nothing runnable in the middle.
 
 ## Installation
 
@@ -59,6 +69,19 @@ Check mode — exits 1 if the input would be reformatted, prints nothing:
 hdlfmtr --check module.vhd
 ```
 
+### CLI flags
+
+```
+--indent-style <STYLE>     tabs (default) | spaces | preserve
+--indent-width <N>         spaces per indent level (default 4); with
+                           tabs, hint passed through to editor
+                           integrations as a tabstop value
+--keyword-case <CASE>      lower (default) | upper | preserve
+--check                    exit 1 if reformatting would change input
+--stdin-filepath <PATH>    path to use for diagnostics when reading
+                           from stdin
+```
+
 ## Editor integration
 
 ### Neovim — lazy.nvim (recommended)
@@ -76,11 +99,16 @@ module knows where to find it afterwards.
   dependencies = { "stevearc/conform.nvim" }, -- optional
   config = function()
     require("hdlfmtr").setup({
-      -- Set true to also prepend hdlfmtr to conform's
-      -- formatters_by_ft.vhdl, so format-on-save Just Works without
-      -- further config. Defaults to false because chaining with vsg
-      -- (see below) usually wants explicit ordering.
-      auto_register_vhdl = false,
+      -- Formatter options (forwarded to the binary as CLI flags).
+      indent_style = "tabs",   -- "tabs" | "spaces" | "preserve"
+      indent_width = 4,        -- spaces per level, or tabstop hint
+      keyword_case = "lower",  -- "lower" | "upper" | "preserve"
+
+      -- Editor integration.
+      register_with_conform = true,  -- register the formatter def
+      auto_register_vhdl    = false, -- also add to formatters_by_ft.vhdl
+      set_buffer_options    = true,  -- match nvim tabstop/shiftwidth
+                                     -- to indent_width on vhdl buffers
     })
   end,
 }
@@ -94,6 +122,17 @@ install time. After install you also get:
 - `require("hdlfmtr").format_buffer(bufnr)` — programmatic API.
 - `require("hdlfmtr").binary()` — absolute path to the bundled binary,
   in case you need it for tooling.
+
+### Setup options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `indent_style` | `"tabs"` | `"tabs"`, `"spaces"`, or `"preserve"` to skip the indent pass entirely. |
+| `indent_width` | `4` | When `indent_style = "spaces"`, the number of spaces per level. When `"tabs"`, the tabstop / shiftwidth applied to vhdl buffers (cosmetic). |
+| `keyword_case` | `"lower"` | `"lower"`, `"upper"`, or `"preserve"`. Identifiers are never touched. |
+| `register_with_conform` | `true` | Register `hdlfmtr` as a conform.nvim formatter definition (no effect if conform is not loaded). |
+| `auto_register_vhdl` | `false` | Also prepend `hdlfmtr` to `conform.formatters_by_ft.vhdl`. Set this if you want a true zero-config install. |
+| `set_buffer_options` | `true` | On entering a vhdl buffer, set `tabstop`, `softtabstop`, `shiftwidth`, `expandtab` to match the formatter config. Disable if you manage these yourself. |
 
 ### Neovim — manual conform.nvim wiring
 
@@ -165,10 +204,16 @@ public `format` API stays stable as the implementation deepens.
       literal vs. attribute-tick disambiguation, bit-string and based
       literals.
 - [x] **Process-label insertion** (`process_016`, `process_018`).
-- [ ] **Indent normalization.** Two-space indentation as the default,
-      configurable.
-- [ ] **Keyword case folding.** Honor a project-wide convention
-      (lower / upper / preserve).
+- [x] **Indent normalization.** Tab-default, spaces-configurable.
+      Stack-based depth tracking across structural blocks and
+      multi-line parens.
+- [x] **Keyword case folding.** Lower / upper / preserve. Identifiers
+      untouched.
+- [x] **Trailing-whitespace removal & final-newline.**
+- [ ] **Case-statement `when` indenting.** Today `when` lines render at
+      the case body depth without an extra level for branch bodies.
+- [ ] **Predefined identifier folding** (`std_logic`, `bit_vector`,
+      etc) so a mixed-case file ends up consistently lowercased.
 - [ ] **Port and signal-list alignment.** The single biggest source of
       churn in hand-edited VHDL.
 - [ ] **Comment reflow** for line and block comments.

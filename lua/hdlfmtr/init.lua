@@ -1,7 +1,7 @@
 --- hdlfmtr — fast VHDL formatter, Neovim integration.
 ---
---- This module is the entry point users `require("hdlfmtr")` from their
---- lazy.nvim config. It exposes:
+--- This module is the entry point users `require("hdlfmtr")` from
+--- their lazy.nvim config. It exposes:
 ---
 ---   • setup(opts)             — wire hdlfmtr into the editor
 ---   • format_buffer(bufnr)    — format a single buffer in place
@@ -15,6 +15,7 @@
 local M = {}
 
 local DEFAULTS = {
+  -- ── Editor integration ───────────────────────────────────────────
   -- When true, register `hdlfmtr` as a conform.nvim formatter, so
   -- users can reference it from their own `formatters_by_ft`. Has no
   -- effect if conform.nvim is not loaded.
@@ -22,15 +23,34 @@ local DEFAULTS = {
 
   -- When true, also prepend `hdlfmtr` to conform.formatters_by_ft.vhdl
   -- so format-on-save Just Works for vhdl buffers without further
-  -- config. Defaults to false because some users want to chain
-  -- hdlfmtr with vsg and prefer to control the order themselves.
+  -- config. Defaults to false because users with an explicit conform
+  -- config usually prefer to control ordering themselves.
   auto_register_vhdl = false,
+
+  -- When true, the plugin sets `tabstop`, `shiftwidth`, `softtabstop`
+  -- and `expandtab` on vhdl buffers to match the formatter config —
+  -- so the visual indent in your editor matches the bytes hdlfmtr
+  -- writes to disk. Disable if you manage these options yourself.
+  set_buffer_options = true,
+
+  -- ── Formatter options (forwarded as CLI flags) ───────────────────
+  -- Indentation style: "tabs" | "spaces" | "preserve".
+  indent_style = "tabs",
+
+  -- Width of one indent level. With indent_style = "spaces" this is
+  -- literally the number of spaces; with "tabs" it controls the
+  -- buffer-local tabstop / shiftwidth set by `set_buffer_options`.
+  indent_width = 4,
+
+  -- Case to apply to reserved words: "lower" | "upper" | "preserve".
+  keyword_case = "lower",
 }
 
 local config = vim.deepcopy(DEFAULTS)
 
 --- Resolve the directory containing this Lua file's grandparent —
---- i.e. the plugin install root, regardless of where lazy installed it.
+--- i.e. the plugin install root, regardless of where lazy installed
+--- it.
 local function plugin_root()
   -- debug.getinfo gives us the absolute path to *this* file (with a
   -- leading `@` we strip). From `lua/hdlfmtr/init.lua` we go up three
@@ -59,6 +79,24 @@ local function notify_not_built()
   )
 end
 
+--- Build the CLI argument list from the current config. Used by both
+--- the conform.nvim integration and the standalone format_buffer
+--- code path so they always agree on flags.
+local function build_args(filename)
+  local args = {}
+  if filename and filename ~= "" then
+    table.insert(args, "--stdin-filepath")
+    table.insert(args, filename)
+  end
+  table.insert(args, "--indent-style")
+  table.insert(args, config.indent_style)
+  table.insert(args, "--indent-width")
+  table.insert(args, tostring(config.indent_width))
+  table.insert(args, "--keyword-case")
+  table.insert(args, config.keyword_case)
+  return args
+end
+
 --- Format a single buffer in place. Cursor and view are preserved.
 --- Returns true on success, false otherwise.
 function M.format_buffer(bufnr)
@@ -79,12 +117,12 @@ function M.format_buffer(bufnr)
   local input = table.concat(lines, "\n") .. "\n"
   local filename = vim.api.nvim_buf_get_name(bufnr)
 
-  local result = vim
-    .system(
-      { M.binary(), "--stdin-filepath", filename },
-      { stdin = input, text = true }
-    )
-    :wait()
+  local cmd = { M.binary() }
+  for _, a in ipairs(build_args(filename)) do
+    table.insert(cmd, a)
+  end
+
+  local result = vim.system(cmd, { stdin = input, text = true }):wait()
 
   if result.code ~= 0 then
     local msg = result.stderr ~= nil and result.stderr ~= "" and result.stderr
@@ -113,9 +151,7 @@ function M.format_buffer(bufnr)
   return true
 end
 
---- Register hdlfmtr with conform.nvim if it is loaded. Honors
---- `auto_register_vhdl` to control whether vhdl files automatically
---- pick up hdlfmtr as a formatter.
+--- Register hdlfmtr with conform.nvim if it is loaded.
 local function register_with_conform()
   local ok, conform = pcall(require, "conform")
   if not ok then
@@ -124,7 +160,12 @@ local function register_with_conform()
   conform.formatters = conform.formatters or {}
   conform.formatters.hdlfmtr = {
     command = M.binary(),
-    args = { "--stdin-filepath", "$FILENAME" },
+    -- Function form so the args reflect the current config every
+    -- time conform invokes the formatter, even if the user calls
+    -- setup() again later with different options.
+    args = function()
+      return build_args("$FILENAME")
+    end,
     stdin = true,
   }
   if config.auto_register_vhdl then
@@ -140,12 +181,37 @@ local function register_with_conform()
   end
 end
 
+--- Apply hdlfmtr's indent settings to vhdl buffers as they're opened.
+--- Disabled by setting `set_buffer_options = false`.
+local function install_buffer_option_autocmd()
+  local group = vim.api.nvim_create_augroup("hdlfmtr.buffer_options", { clear = true })
+  vim.api.nvim_create_autocmd("FileType", {
+    group = group,
+    pattern = "vhdl",
+    callback = function(args)
+      local bo = vim.bo[args.buf]
+      bo.tabstop = config.indent_width
+      bo.softtabstop = config.indent_width
+      bo.shiftwidth = config.indent_width
+      if config.indent_style == "spaces" then
+        bo.expandtab = true
+      elseif config.indent_style == "tabs" then
+        bo.expandtab = false
+      end
+      -- "preserve" leaves expandtab alone.
+    end,
+  })
+end
+
 --- One-time setup. Idempotent — calling twice is harmless.
 function M.setup(opts)
   config = vim.tbl_deep_extend("force", DEFAULTS, opts or {})
 
   if config.register_with_conform then
     register_with_conform()
+  end
+  if config.set_buffer_options then
+    install_buffer_option_autocmd()
   end
 end
 

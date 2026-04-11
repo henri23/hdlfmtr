@@ -1,12 +1,16 @@
 //! hdlfmtr — a fast VHDL formatter.
 //!
-//! Today this crate exposes a single best-effort `format` function that
-//! runs targeted rewrite passes on a VHDL source string. Future versions
-//! will grow into a full pretty-printer; the public API is intentionally
-//! minimal so that the underlying implementation can be replaced
-//! without breaking callers.
+//! The crate exposes a `format` function that runs a fixed pipeline
+//! of token-stream rewrite passes (label insertion, keyword case
+//! folding, indent normalization, whitespace housekeeping). All passes
+//! are driven from a single `Config`. The public API is intentionally
+//! minimal so the underlying implementation can be replaced without
+//! breaking callers.
 
+pub mod config;
 pub mod format;
+pub mod indent;
 pub mod lexer;
 
-pub use format::{format, FormatError};
+pub use config::{Config, IndentStyle, KeywordCase};
+pub use format::{FormatError, format};
