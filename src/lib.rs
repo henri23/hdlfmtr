@@ -12,6 +12,8 @@ pub mod config;
 pub mod format;
 pub mod indent;
 pub mod lexer;
+pub mod lint;
 
 pub use config::{Config, IndentStyle, KeywordCase};
 pub use format::{FormatError, format};
+pub use lint::{Diagnostic, Severity, lint};

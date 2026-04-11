@@ -8,7 +8,7 @@ single static binary, and integrate cleanly with editor plugins that
 follow the prettier-style stdin-to-stdout contract (conform.nvim,
 null-ls, efm-langserver, ALE, VS Code formatters).
 
-## Status — honest scope
+## Status - honest scope
 
 `hdlfmtr` is young but already useful. The current pipeline runs the
 following passes in order:
@@ -35,7 +35,7 @@ case-statement `when` indenting, library and use-clause sorting,
 Wadler-style line-width-aware pretty printing. These are on the
 roadmap below.
 
-Each release ships value at its current size — no six-month parser
+Each release ships value at its current size - no six-month parser
 refactor with nothing runnable in the middle.
 
 ## Installation
@@ -63,7 +63,7 @@ On a file:
 hdlfmtr module.vhd
 ```
 
-Check mode — exits 1 if the input would be reformatted, prints nothing:
+Check mode - exits 1 if the input would be reformatted, prints nothing:
 
 ```sh
 hdlfmtr --check module.vhd
@@ -87,7 +87,7 @@ hdlfmtr --check module.vhd
 
 ## Editor integration
 
-### Neovim — lazy.nvim (recommended)
+### Neovim - lazy.nvim (recommended)
 
 `hdlfmtr` ships its own Neovim plugin layer, so you can install it as
 a regular lazy.nvim spec and skip the manual cargo path wiring. The
@@ -124,26 +124,26 @@ module knows where to find it afterwards.
 are on the roadmap; until then `cargo build --release` runs once at
 install time. After install you also get:
 
-- `:HdlFmt` — format the current buffer.
-- `require("hdlfmtr").format_buffer(bufnr)` — programmatic API.
-- `require("hdlfmtr").binary()` — absolute path to the bundled binary,
+- `:HdlFmt` - format the current buffer.
+- `require("hdlfmtr").format_buffer(bufnr)` - programmatic API.
+- `require("hdlfmtr").binary()` - absolute path to the bundled binary,
   in case you need it for tooling.
 
 ### Setup options
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `indent_style` | `"tabs"` | `"tabs"`, `"spaces"`, or `"preserve"` to skip the indent pass entirely. |
-| `indent_width` | `4` | When `indent_style = "spaces"`, the number of spaces per level. When `"tabs"`, the tabstop / shiftwidth applied to vhdl buffers (cosmetic). |
-| `keyword_case` | `"lower"` | `"lower"`, `"upper"`, or `"preserve"`. Identifiers are never touched, except for a small allowlist of predefined names (`std_logic`, `bit_vector`, `integer`, `ieee`, ...). |
-| `align_declarations` | `true` | Vertically align consecutive port / signal / variable / constant declaration lines so that names, `:`, modes, types, and trailing comments line up in columns. |
-| `case_branch_indent` | `true` | Inside `case` statements, indent the body of each `when` branch one level deeper than the `when` keyword itself. The other style (`when` and body at the same depth) is reachable with `false`. |
-| `sort_use_clauses` | `true` | Alphabetically sort consecutive `use X.Y.Z;` lines. `library` clauses are never reordered. |
-| `register_with_conform` | `true` | Register `hdlfmtr` as a conform.nvim formatter definition (no effect if conform is not loaded). |
-| `auto_register_vhdl` | `false` | Also prepend `hdlfmtr` to `conform.formatters_by_ft.vhdl`. Set this if you want a true zero-config install. |
-| `set_buffer_options` | `true` | On entering a vhdl buffer, set `tabstop`, `softtabstop`, `shiftwidth`, `expandtab` to match the formatter config. Disable if you manage these yourself. |
+| Option                  | Default   | Description                                                                                                                                                                                     |
+| ----------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `indent_style`          | `"tabs"`  | `"tabs"`, `"spaces"`, or `"preserve"` to skip the indent pass entirely.                                                                                                                         |
+| `indent_width`          | `4`       | When `indent_style = "spaces"`, the number of spaces per level. When `"tabs"`, the tabstop / shiftwidth applied to vhdl buffers (cosmetic).                                                     |
+| `keyword_case`          | `"lower"` | `"lower"`, `"upper"`, or `"preserve"`. Identifiers are never touched, except for a small allowlist of predefined names (`std_logic`, `bit_vector`, `integer`, `ieee`, ...).                     |
+| `align_declarations`    | `true`    | Vertically align consecutive port / signal / variable / constant declaration lines so that names, `:`, modes, types, and trailing comments line up in columns.                                  |
+| `case_branch_indent`    | `true`    | Inside `case` statements, indent the body of each `when` branch one level deeper than the `when` keyword itself. The other style (`when` and body at the same depth) is reachable with `false`. |
+| `sort_use_clauses`      | `true`    | Alphabetically sort consecutive `use X.Y.Z;` lines. `library` clauses are never reordered.                                                                                                      |
+| `register_with_conform` | `true`    | Register `hdlfmtr` as a conform.nvim formatter definition (no effect if conform is not loaded).                                                                                                 |
+| `auto_register_vhdl`    | `false`   | Also prepend `hdlfmtr` to `conform.formatters_by_ft.vhdl`. Set this if you want a true zero-config install.                                                                                     |
+| `set_buffer_options`    | `true`    | On entering a vhdl buffer, set `tabstop`, `softtabstop`, `shiftwidth`, `expandtab` to match the formatter config. Disable if you manage these yourself.                                         |
 
-### Neovim — manual conform.nvim wiring
+### Neovim - manual conform.nvim wiring
 
 If you don't want the plugin layer and prefer to install `hdlfmtr` as
 a system binary (`cargo install --path .`), point conform.nvim at it
@@ -187,7 +187,7 @@ bails out and writes its formatted result back as expected.
 
 VHDL tooling is sparse. The de-facto VHDL formatter is `vsg`
 (VHDL Style Guide), which is Python-based, has a slow cold-start, and
-refuses to write output when it sees rules it cannot auto-fix — even
+refuses to write output when it sees rules it cannot auto-fix - even
 if those rules are trivially fixable in principle. The result is that
 editor format-on-save flows time out or silently drop fixes.
 

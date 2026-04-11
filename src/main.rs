@@ -60,6 +60,16 @@ struct Cli {
     #[arg(long)]
     no_sort_uses: bool,
 
+    /// Disable lint checks. Lints emit JSONL diagnostics to stderr
+    /// (one per line) for editor integrations to consume.
+    #[arg(long)]
+    no_lint: bool,
+
+    /// Disable insertion of one blank line between consecutive
+    /// top-level statements inside an architecture body.
+    #[arg(long)]
+    no_stylish_blanks: bool,
+
     /// Check whether the input is already formatted. Exits 1 if it
     /// would be changed. Does not write any output.
     #[arg(long)]
@@ -122,6 +132,7 @@ fn run() -> Result<ExitCode> {
         align_declarations: !cli.no_align,
         case_branch_indent: !cli.no_case_branch_indent,
         sort_use_clauses: !cli.no_sort_uses,
+        stylish_blank_lines: !cli.no_stylish_blanks,
     };
 
     let source = match &cli.file {
@@ -137,6 +148,20 @@ fn run() -> Result<ExitCode> {
     };
 
     let formatted = hdlfmtr::format(&source, &cfg).context("formatting source")?;
+
+    // Lint runs on the formatted output so positions reported in
+    // diagnostics line up with what the user sees on disk after the
+    // formatter writes.
+    if !cli.no_lint {
+        let diagnostics = hdlfmtr::lint(&formatted, &cfg);
+        if !diagnostics.is_empty() {
+            let stderr = io::stderr();
+            let mut err = stderr.lock();
+            for d in &diagnostics {
+                writeln!(err, "{}", d.to_jsonl()).context("writing diagnostics")?;
+            }
+        }
+    }
 
     if cli.check {
         return Ok(if formatted == source {

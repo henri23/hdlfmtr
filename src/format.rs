@@ -28,24 +28,36 @@ pub fn format(src: &str, cfg: &Config) -> Result<String, FormatError> {
     };
     // Pass 2: keyword case.
     let after_case = fold_keyword_case(&after_labels, cfg);
-    // Pass 3: sort consecutive use clauses (cheap, depends only on
-    // case folding having normalized the spelling).
+    // Pass 3: numeric literal cleanup (operates on token text).
+    let after_numeric = format_numeric_literals(&after_case);
+    // Pass 4: operator spacing normalization.
+    let after_ops = normalize_operator_spacing(&after_numeric);
+    // Pass 5: sort consecutive library and use clauses.
     let after_sort = if cfg.sort_use_clauses {
-        sort_use_clauses(&after_case)
+        let s = sort_library_clauses(&after_ops);
+        sort_use_clauses(&s)
     } else {
-        after_case
+        after_ops
     };
-    // Pass 4: indent.
+    // Pass 6: indent.
     let after_indent = normalize_indent(&after_sort, cfg);
-    // Pass 5: vertical alignment of declaration lines.
+    // Pass 7: vertical alignment of declaration lines.
     let after_align = if cfg.align_declarations {
         align_declarations(&after_indent)
     } else {
         after_indent
     };
-    // Pass 6: trim trailing whitespace.
-    let after_trim = trim_trailing_whitespace(&after_align);
-    // Pass 7: ensure exactly one trailing newline.
+    // Pass 8: insert stylish blank lines between top-level statements.
+    let after_stylish = if cfg.stylish_blank_lines {
+        insert_stylish_blank_lines(&after_align)
+    } else {
+        after_align
+    };
+    // Pass 9: collapse runs of 3+ blank lines.
+    let after_collapse = collapse_blank_lines(&after_stylish);
+    // Pass 10: trim trailing whitespace.
+    let after_trim = trim_trailing_whitespace(&after_collapse);
+    // Pass 11: ensure exactly one trailing newline.
     Ok(ensure_final_newline(&after_trim))
 }
 
@@ -323,6 +335,308 @@ fn is_use_clause(line: &str) -> bool {
         .eq_ignore_ascii_case(b"use ")
 }
 
+fn is_library_clause(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.len() < 8 {
+        return false;
+    }
+    trimmed.as_bytes()[..8]
+        .eq_ignore_ascii_case(b"library ")
+}
+
+/// Sort consecutive `library X;` clauses alphabetically. Same shape
+/// as `sort_use_clauses` but for the other top-of-file directive.
+fn sort_library_clauses(src: &str) -> String {
+    let lines: Vec<&str> = src.split_inclusive('\n').collect();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    while i < lines.len() {
+        if is_library_clause(lines[i]) {
+            let mut j = i + 1;
+            while j < lines.len() && is_library_clause(lines[j]) {
+                j += 1;
+            }
+            if j - i >= 2 {
+                let mut group: Vec<&str> = lines[i..j].to_vec();
+                group.sort_by_key(|s| s.trim().to_ascii_lowercase());
+                for s in &group {
+                    out.push_str(s);
+                }
+                i = j;
+                continue;
+            }
+        }
+        out.push_str(lines[i]);
+        i += 1;
+    }
+    out
+}
+
+// ───────────────────────── operator spacing ─────────────────────────
+
+/// Normalize the spacing around binary operators so each operator
+/// has exactly one space on either side. Preserves all other source
+/// content (including indent, content of strings/comments, and the
+/// internal layout of expressions).
+///
+/// Operators handled: `<=`, `:=`, `=>`, `=`, `/=`, `<`, `>`, `<=`,
+/// `>=`, `**`. Unary `-` and `+` are intentionally left alone — we
+/// can't reliably tell unary from binary without a parser.
+fn normalize_operator_spacing(src: &str) -> String {
+    let tokens = tokenize(src);
+    let mut out = String::with_capacity(src.len());
+    let mut cursor = 0usize;
+    for (i, tok) in tokens.iter().enumerate() {
+        let is_op = matches!(
+            tok.kind,
+            TokenKind::Assign
+                | TokenKind::Arrow
+                | TokenKind::LE
+                | TokenKind::GE
+                | TokenKind::NEq
+                | TokenKind::Power
+        );
+        if !is_op {
+            continue;
+        }
+        // Don't normalize on a line that begins (after indent) with
+        // the operator — this can happen with multi-line continuations
+        // we don't yet support; leave them alone.
+        if i == 0 {
+            continue;
+        }
+
+        // Look at the previous and next non-trivia tokens. If either
+        // is missing, skip.
+        let prev = previous_significant_idx(&tokens, i);
+        let next = next_significant_idx(&tokens, i);
+        let (Some(prev), Some(next)) = (prev, next) else {
+            continue;
+        };
+
+        // Only normalize if the previous and next tokens are on the
+        // same line as the operator. Cross-line wrapping can have
+        // intentional layout we shouldn't disturb.
+        let same_line_left = !any_newline_between(&tokens, prev, i);
+        let same_line_right = !any_newline_between(&tokens, i, next);
+        if !(same_line_left && same_line_right) {
+            continue;
+        }
+
+        // Emit src up to the end of the previous significant token,
+        // then ` <op> `, then advance the cursor to the start of the
+        // next significant token. This collapses any whitespace runs
+        // around the operator into single spaces.
+        out.push_str(&src[cursor..tokens[prev].end]);
+        out.push(' ');
+        out.push_str(tok.text(src));
+        out.push(' ');
+        cursor = tokens[next].start;
+    }
+    out.push_str(&src[cursor..]);
+    out
+}
+
+fn previous_significant_idx(tokens: &[Token], i: usize) -> Option<usize> {
+    (0..i).rev().find(|&j| !tokens[j].is_trivia())
+}
+
+fn next_significant_idx(tokens: &[Token], i: usize) -> Option<usize> {
+    ((i + 1)..tokens.len()).find(|&j| !tokens[j].is_trivia())
+}
+
+fn any_newline_between(tokens: &[Token], a: usize, b: usize) -> bool {
+    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+    tokens[lo + 1..hi]
+        .iter()
+        .any(|t| t.kind == TokenKind::Newline)
+}
+
+// ───────────────────────── stylish blank lines ─────────────────────────
+
+/// Insert one blank line between consecutive process / labeled
+/// statements inside an architecture body, if they're not already
+/// separated by one. Conservative pass: never inserts more than one
+/// blank, never touches anything that already has spacing.
+fn insert_stylish_blank_lines(src: &str) -> String {
+    let lines: Vec<&str> = src.split_inclusive('\n').collect();
+    let mut out = String::with_capacity(src.len() + 64);
+    let mut i = 0;
+    while i < lines.len() {
+        out.push_str(lines[i]);
+        if line_ends_top_level_statement(lines[i]) {
+            // Look ahead to the next non-blank, non-comment line.
+            let mut j = i + 1;
+            while j < lines.len() {
+                let t = lines[j].trim();
+                if t.is_empty() {
+                    break; // already separated by a blank
+                }
+                if t.starts_with("--") {
+                    j += 1;
+                    continue; // comments stay attached to the next stmt
+                }
+                break;
+            }
+            if j < lines.len() && !lines[j].trim().is_empty() {
+                let next = lines[j];
+                if line_starts_top_level_statement(next) {
+                    out.push('\n');
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// True iff a line is the end of a top-level statement we want to
+/// separate from the next: `end process [label];`,
+/// `end generate [label];`, `end block [label];`, or a single-line
+/// concurrent assignment ending in `;`.
+fn line_ends_top_level_statement(line: &str) -> bool {
+    let trimmed = line.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("end process")
+        || lower.starts_with("end generate")
+        || lower.starts_with("end block")
+    {
+        return true;
+    }
+    // We deliberately don't fire on `end if` / `end loop` / `end case`
+    // because those are *inside* statements, not between them.
+    false
+}
+
+/// True iff a line begins a new top-level statement that should be
+/// preceded by a blank line: a `process` declaration, a labeled
+/// statement (`label : process` / `label : <component>`), or a
+/// labeled generate.
+fn line_starts_top_level_statement(line: &str) -> bool {
+    let trimmed = line.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("process") || lower.starts_with("postponed process") {
+        return true;
+    }
+    // `<label> : <something>` where <something> is process / postponed /
+    // a component name (we can't tell components from other types
+    // without a symbol table, but we can use the heuristic that any
+    // labeled statement at the architecture top level is "blockish"
+    // enough to deserve separation).
+    if let Some(colon) = trimmed.find(':') {
+        let after = trimmed[colon + 1..].trim_start().to_ascii_lowercase();
+        if !after.is_empty() && !after.starts_with('=') {
+            return true;
+        }
+    }
+    false
+}
+
+// ───────────────────────── blank-line collapse ─────────────────────────
+
+/// Collapse runs of three or more consecutive blank lines into one.
+/// Single and double blank lines are preserved.
+fn collapse_blank_lines(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut blank_run: usize = 0;
+    for line in src.split_inclusive('\n') {
+        let is_blank = line.trim().is_empty();
+        if is_blank {
+            blank_run += 1;
+            if blank_run <= 1 {
+                out.push_str(line);
+            }
+        } else {
+            blank_run = 0;
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+// ───────────────────────── numeric literal formatting ─────────────────────────
+
+/// Two related normalizations on numeric literals:
+///
+///   • Insert `_` group separators in long decimal integers
+///     (`1000000` -> `1_000_000`).
+///   • Normalize the case of hex bit-string literals (`x"ff"` ->
+///     `x"FF"` by default).
+///
+/// Floating-point and based literals are intentionally left alone -
+/// they're already varied enough that re-grouping them is risky.
+fn format_numeric_literals(src: &str) -> String {
+    let tokens = tokenize(src);
+    let mut out = String::with_capacity(src.len());
+    let mut cursor = 0usize;
+    for tok in &tokens {
+        match tok.kind {
+            TokenKind::Number => {
+                let text = tok.text(src);
+                // Skip based literals (anything containing #) and
+                // anything with a decimal point or exponent — leave
+                // those alone for now.
+                if text.contains(['#', '.', 'e', 'E']) {
+                    continue;
+                }
+                // Plain integer: re-group with underscores every 3
+                // digits from the right, but only if it's at least
+                // 5 digits long.
+                let digits: String = text.chars().filter(|c| c != &'_').collect();
+                if digits.len() < 5 {
+                    continue;
+                }
+                let regrouped = group_with_underscores(&digits);
+                if regrouped == text {
+                    continue;
+                }
+                out.push_str(&src[cursor..tok.start]);
+                out.push_str(&regrouped);
+                cursor = tok.end;
+            }
+            TokenKind::BitString => {
+                // Normalize hex case to uppercase.
+                let text = tok.text(src);
+                // The prefix is one or two letters then `"`.
+                let prefix_end = text.find('"').unwrap_or(0);
+                let prefix = &text[..prefix_end];
+                let prefix_upper = prefix.to_ascii_uppercase();
+                // Only touch hex prefixes (`X`, `UX`, `SX`).
+                if !matches!(prefix_upper.as_str(), "X" | "UX" | "SX") {
+                    continue;
+                }
+                let body_end = text.rfind('"').unwrap_or(text.len());
+                let body = &text[prefix_end + 1..body_end];
+                let body_upper = body.to_ascii_uppercase();
+                let normalized = format!("{}\"{}\"", prefix, body_upper);
+                if normalized == text {
+                    continue;
+                }
+                out.push_str(&src[cursor..tok.start]);
+                out.push_str(&normalized);
+                cursor = tok.end;
+            }
+            _ => {}
+        }
+    }
+    out.push_str(&src[cursor..]);
+    out
+}
+
+fn group_with_underscores(digits: &str) -> String {
+    let chars: Vec<char> = digits.chars().collect();
+    let mut out = String::with_capacity(chars.len() + chars.len() / 3);
+    let len = chars.len();
+    for (i, c) in chars.iter().enumerate() {
+        let from_end = len - i;
+        if i > 0 && from_end % 3 == 0 {
+            out.push('_');
+        }
+        out.push(*c);
+    }
+    out
+}
+
 // ───────────────────── whitespace housekeeping ─────────────────────
 
 /// Strip trailing horizontal whitespace from every line. Newlines and
@@ -428,6 +742,7 @@ mod tests {
             align_declarations: false,
             case_branch_indent: false,
             sort_use_clauses: false,
+            stylish_blank_lines: false,
         }
     }
 

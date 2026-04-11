@@ -37,7 +37,7 @@ pub fn align_declarations(src: &str) -> String {
             let mut j = i + 1;
             while j < lines.len() {
                 if let Some(p) = parsed[j].as_ref() {
-                    if p.indent == start.indent && p.has_mode() == start.has_mode() {
+                    if start.groups_with(p) {
                         j += 1;
                         continue;
                     }
@@ -74,18 +74,35 @@ pub fn align_declarations(src: &str) -> String {
     out
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sep {
+    /// `name : [mode] type` — port / signal / variable / constant declaration.
+    Colon,
+    /// `name => value` — component port map / generic map association.
+    Arrow,
+}
+
 #[derive(Debug)]
 struct ParsedLine {
     indent: String,
     name: String,
+    separator: Sep,
     mode: Option<String>,
-    type_part: String, // includes the trailing `;` if present
+    type_part: String, // type+terminator for Colon, value+terminator for Arrow
     comment: Option<String>, // `-- ...` text, no leading whitespace
 }
 
 impl ParsedLine {
     fn has_mode(&self) -> bool {
         self.mode.is_some()
+    }
+
+    /// Two lines belong to the same alignment group iff they share
+    /// indent, separator, and shape (mode-bearing or not).
+    fn groups_with(&self, other: &Self) -> bool {
+        self.indent == other.indent
+            && self.separator == other.separator
+            && self.has_mode() == other.has_mode()
     }
 }
 
@@ -103,10 +120,11 @@ fn parse_line(line: &[Token], src: &str) -> Option<ParsedLine> {
         .map(|t| t.text(src))
         .collect();
 
-    // Find the first `:` not inside parens. If we hit a newline first,
-    // it's not an alignable line.
+    // Find the first `:` or `=>` not inside parens. Whichever comes
+    // first determines the line shape (declaration vs port-map). If
+    // we hit a newline first, it's not an alignable line.
     let mut paren_depth = 0i32;
-    let mut colon_idx: Option<usize> = None;
+    let mut sep_idx: Option<(usize, Sep)> = None;
     let mut k = idx;
     while k < line.len() {
         match line[k].kind {
@@ -119,7 +137,11 @@ fn parse_line(line: &[Token], src: &str) -> Option<ParsedLine> {
                 }
             }
             TokenKind::Colon if paren_depth == 0 => {
-                colon_idx = Some(k);
+                sep_idx = Some((k, Sep::Colon));
+                break;
+            }
+            TokenKind::Arrow if paren_depth == 0 => {
+                sep_idx = Some((k, Sep::Arrow));
                 break;
             }
             // Lines that contain `:=` before any `:` aren't declarations.
@@ -128,10 +150,10 @@ fn parse_line(line: &[Token], src: &str) -> Option<ParsedLine> {
         }
         k += 1;
     }
-    let colon_idx = colon_idx?;
+    let (sep_pos, separator) = sep_idx?;
 
-    // Name = trimmed text between indent_end and colon_idx.
-    let name: String = line[indent_end..colon_idx]
+    // Name = trimmed text between indent_end and sep_pos.
+    let name: String = line[indent_end..sep_pos]
         .iter()
         .map(|t| t.text(src))
         .collect::<String>()
@@ -141,9 +163,12 @@ fn parse_line(line: &[Token], src: &str) -> Option<ParsedLine> {
         return None;
     }
     // Reject lines whose "name" looks like a label (label : process,
-    // label : block, label : if-generate, etc.) — those are statements,
-    // not declarations.
-    if let Some(after) = next_significant_text(line, colon_idx + 1, src) {
+    // label : block, label : if-generate, etc.) - those are statements,
+    // not declarations. Only relevant for Colon-separator lines; arrow
+    // lines can never be statement labels.
+    if separator == Sep::Colon
+        && let Some(after) = next_significant_text(line, sep_pos + 1, src)
+    {
         let lower = after.to_ascii_lowercase();
         if matches!(
             lower.as_str(),
@@ -160,12 +185,12 @@ fn parse_line(line: &[Token], src: &str) -> Option<ParsedLine> {
         }
     }
 
-    // After the colon, find the mode (if any).
-    let mut k = colon_idx + 1;
+    // After the separator, find the mode (only valid for Colon).
+    let mut k = sep_pos + 1;
     while k < line.len() && line[k].kind == TokenKind::Whitespace {
         k += 1;
     }
-    let mode = if k < line.len() && is_mode_keyword(&line[k], src) {
+    let mode = if separator == Sep::Colon && k < line.len() && is_mode_keyword(&line[k], src) {
         let m = line[k].text(src).to_string();
         k += 1;
         Some(m)
@@ -219,6 +244,7 @@ fn parse_line(line: &[Token], src: &str) -> Option<ParsedLine> {
     Some(ParsedLine {
         indent,
         name,
+        separator,
         mode,
         type_part,
         comment,
@@ -266,7 +292,12 @@ fn emit_aligned(group: &[&ParsedLine]) -> Vec<String> {
             for _ in line.name.len()..name_width {
                 s.push(' ');
             }
-            s.push_str(" : ");
+            // Separator: ` : ` for declarations, ` => ` for port maps
+            // and case branches.
+            match line.separator {
+                Sep::Colon => s.push_str(" : "),
+                Sep::Arrow => s.push_str(" => "),
+            }
             if has_mode {
                 let m = line.mode.as_deref().unwrap_or("");
                 s.push_str(m);
@@ -428,6 +459,55 @@ end t;
         // declaration. The alignment pass must reject it.
         let src = "\tproc1 : process(clk)\n";
         let out = align_declarations(src);
+        assert_eq!(out, src);
+    }
+
+    #[test]
+    fn aligns_a_port_map() {
+        let src = "\
+\tu1 : my_block
+\t\tport map (
+\t\t\tclk => sys_clk,
+\t\t\trst_n => sys_rst_n,
+\t\t\tdata_in => bus_word
+\t\t);
+";
+        let out = align_declarations(src);
+        let expected = "\
+\tu1 : my_block
+\t\tport map (
+\t\t\tclk     => sys_clk,
+\t\t\trst_n   => sys_rst_n,
+\t\t\tdata_in => bus_word
+\t\t);
+";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn aligns_case_when_branches() {
+        let src = "\
+\twhen '0' => y <= '1';
+\twhen '1' => y <= '0';
+\twhen others => y <= 'Z';
+";
+        let out = align_declarations(src);
+        let expected = "\
+\twhen '0'    => y <= '1';
+\twhen '1'    => y <= '0';
+\twhen others => y <= 'Z';
+";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn declarations_and_port_maps_do_not_share_a_group() {
+        let src = "\
+\ta : in std_logic;
+\tb => sys_b
+";
+        let out = align_declarations(src);
+        // Different separators -> two groups of size 1 -> no alignment.
         assert_eq!(out, src);
     }
 

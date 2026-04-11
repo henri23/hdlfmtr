@@ -44,6 +44,10 @@ pub struct Config {
     /// Whether to sort consecutive `use X.Y.Z;` clauses
     /// alphabetically. Default `true`.
     pub sort_use_clauses: bool,
+    /// Whether to insert one blank line between consecutive top-level
+    /// statements inside an architecture body (process / labeled
+    /// statement / component instantiation). Default `true`.
+    pub stylish_blank_lines: bool,
 }
 
 impl Default for Config {
@@ -55,6 +59,7 @@ impl Default for Config {
             align_declarations: true,
             case_branch_indent: true,
             sort_use_clauses: true,
+            stylish_blank_lines: true,
         }
     }
 }

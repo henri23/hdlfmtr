@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The lazy.nvim plugin's `setup()` accepts the corresponding options
   and forwards them as CLI flags.
 
-## [0.1.0] — 2026-04-11
+## [0.1.0] - 2026-04-11
 
 ### Added
 - Initial release.

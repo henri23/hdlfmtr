@@ -58,7 +58,27 @@ local DEFAULTS = {
   -- Sort consecutive `use X.Y.Z;` clauses alphabetically. Set false to
   -- preserve the original order.
   sort_use_clauses = true,
+
+  -- Insert one blank line between consecutive top-level statements
+  -- inside an architecture body (process, labeled statement,
+  -- component instantiation). Set false to disable.
+  stylish_blank_lines = true,
+
+  -- Run lint checks and surface their findings as nvim diagnostics
+  -- (gutter signs, virtual text, ]d/[d navigation, quickfix). Set
+  -- false to disable lint output entirely.
+  lint = true,
 }
+
+--- Diagnostic namespace, lazily created. Each format_buffer call
+--- replaces the diagnostics for the current buffer in this namespace.
+local diagnostic_ns = nil
+local function ns()
+  if diagnostic_ns == nil then
+    diagnostic_ns = vim.api.nvim_create_namespace("hdlfmtr")
+  end
+  return diagnostic_ns
+end
 
 local config = vim.deepcopy(DEFAULTS)
 
@@ -117,7 +137,98 @@ local function build_args(filename)
   if config.sort_use_clauses == false then
     table.insert(args, "--no-sort-uses")
   end
+  if config.stylish_blank_lines == false then
+    table.insert(args, "--no-stylish-blanks")
+  end
+  if config.lint == false then
+    table.insert(args, "--no-lint")
+  end
   return args
+end
+
+--- Severity strings emitted by the binary, mapped to nvim's enum.
+local SEVERITY = {
+  error = vim.diagnostic.severity.ERROR,
+  warning = vim.diagnostic.severity.WARN,
+  info = vim.diagnostic.severity.INFO,
+  hint = vim.diagnostic.severity.HINT,
+}
+
+--- Decode a single JSON-encoded string body. Handles the escape
+--- sequences hdlfmtr's hand-rolled encoder produces (no need to be
+--- a full JSON parser - the binary controls both ends).
+local function unescape_json_string(s)
+  s = s:gsub("\\u(%x%x%x%x)", function(hex)
+    return vim.fn.nr2char(tonumber(hex, 16))
+  end)
+  s = s:gsub("\\n", "\n")
+  s = s:gsub("\\r", "\r")
+  s = s:gsub("\\t", "\t")
+  s = s:gsub('\\"', '"')
+  s = s:gsub("\\\\", "\\")
+  return s
+end
+
+--- Parse one JSONL diagnostic line into a table. Returns nil if the
+--- line doesn't look like a diagnostic.
+local function parse_diagnostic(line)
+  if line == nil or line == "" then
+    return nil
+  end
+  -- Field extraction is regex-based; the encoder is fixed-shape so
+  -- this is safe and avoids pulling in a JSON dependency.
+  local function num(field)
+    return tonumber(line:match('"' .. field .. '":(%d+)'))
+  end
+  local function str(field)
+    local m = line:match('"' .. field .. '":"(.-[^\\])"')
+    if m == nil then
+      m = line:match('"' .. field .. '":""')
+      if m ~= nil then
+        return ""
+      end
+    end
+    if m == nil then
+      return nil
+    end
+    return unescape_json_string(m)
+  end
+  local lnum = num("line")
+  local col = num("col")
+  local end_lnum = num("end_line")
+  local end_col = num("end_col")
+  local severity = str("severity")
+  local code = str("code")
+  local message = str("message")
+  if lnum == nil or col == nil or message == nil then
+    return nil
+  end
+  return {
+    -- nvim is 0-indexed, hdlfmtr emits 1-indexed.
+    lnum = lnum - 1,
+    col = col - 1,
+    end_lnum = (end_lnum or lnum) - 1,
+    end_col = (end_col or col) - 1,
+    severity = SEVERITY[severity or "warning"] or vim.diagnostic.severity.WARN,
+    source = "hdlfmtr",
+    code = code,
+    message = message or "",
+  }
+end
+
+--- Parse a stderr blob from the binary into a list of diagnostics.
+local function parse_diagnostics_blob(blob)
+  if blob == nil or blob == "" then
+    return {}
+  end
+  local out = {}
+  for line in blob:gmatch("[^\n]+") do
+    local d = parse_diagnostic(line)
+    if d ~= nil then
+      table.insert(out, d)
+    end
+  end
+  return out
 end
 
 --- Format a single buffer in place. Cursor and view are preserved.
@@ -152,6 +263,14 @@ function M.format_buffer(bufnr)
       or ("exit code " .. tostring(result.code))
     vim.notify("hdlfmtr: " .. msg, vim.log.levels.ERROR)
     return false
+  end
+
+  -- Parse diagnostics from stderr (the binary writes one JSON per
+  -- line). Always replace the previous set, even if empty - that
+  -- way fixing a warning clears it from the gutter immediately.
+  if config.lint ~= false then
+    local diagnostics = parse_diagnostics_blob(result.stderr or "")
+    vim.diagnostic.set(ns(), bufnr, diagnostics)
   end
 
   -- Preserve cursor + window view across the buffer rewrite.

@@ -41,6 +41,7 @@ fn labels_only() -> Config {
         align_declarations: false,
         case_branch_indent: false,
         sort_use_clauses: false,
+        stylish_blank_lines: false,
     }
 }
 
