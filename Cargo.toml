@@ -1,0 +1,29 @@
+[package]
+name = "hdlfmtr"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A fast VHDL formatter for editors and CI."
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/henri23/hdlfmtr"
+homepage = "https://github.com/henri23/hdlfmtr"
+keywords = ["vhdl", "formatter", "fpga", "hdl", "eda"]
+categories = ["command-line-utilities", "development-tools"]
+
+[lib]
+name = "hdlfmtr"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hdlfmtr"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
