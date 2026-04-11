@@ -44,20 +44,61 @@ pub fn normalize_indent(src: &str, cfg: &Config) -> String {
     // didn't use the optional `is`. When `begin` arrives we push and
     // clear the flag.
     let mut expect_begin_opens_block = false;
+    // Tracks open `case` statements for when-branch indenting. Each
+    // entry is `true` iff we currently have an open `when` branch
+    // inside that case (its body is at one extra depth level).
+    let mut case_branch_open: Vec<bool> = Vec::new();
+    // "expecting `is`" flag specific to `case` (so we can push the
+    // case_branch_open stack at the right moment).
+    let mut expect_case_is = false;
 
     let mut output = String::with_capacity(src.len());
 
     for (line_idx, line) in lines.iter().enumerate() {
-        let first = line
+        // Find the first non-whitespace token *and* its position in
+        // the line, so we can do small lookahead from it.
+        let first_idx = line
             .iter()
-            .find(|t| !matches!(t.kind, TokenKind::Whitespace));
+            .position(|t| !matches!(t.kind, TokenKind::Whitespace));
+        let first = first_idx.map(|i| &line[i]);
+
+        // Lookahead helper: next significant token in this line after
+        // a given position. Used to detect `end case` (vs `end if`,
+        // `end loop`, etc.) at line render time.
+        let next_significant_after = |idx: usize| -> Option<&Token> {
+            line[idx + 1..]
+                .iter()
+                .find(|t| !t.is_trivia())
+        };
 
         // Compute the rendered depth for this line. Lines whose first
         // significant token closes a construct are rendered one level
         // shallower than the body of that construct.
-        let adjustment = match first.map(|t| t.kind) {
-            Some(TokenKind::Keyword(Keyword::End)) => -1,
+        let adjustment: i32 = match first.map(|t| t.kind) {
+            Some(TokenKind::Keyword(Keyword::End)) => {
+                // `end case` while a when-branch is open closes both
+                // the branch and the case body, so it needs to drop
+                // two levels rather than one.
+                let next_kind = first_idx.and_then(next_significant_after).map(|t| t.kind);
+                if cfg.case_branch_indent
+                    && case_branch_open.last() == Some(&true)
+                    && next_kind == Some(TokenKind::Keyword(Keyword::Case))
+                {
+                    -2
+                } else {
+                    -1
+                }
+            }
             Some(TokenKind::Keyword(Keyword::Else | Keyword::Elsif)) => -1,
+            Some(TokenKind::Keyword(Keyword::When)) => {
+                // A `when` line that isn't the first branch in its
+                // case needs to drop back to the case-body depth.
+                if cfg.case_branch_indent && case_branch_open.last() == Some(&true) {
+                    -1
+                } else {
+                    0
+                }
+            }
             // `begin` rendering is context-sensitive:
             //   • If it opens a process/function/procedure body that
             //     skipped the optional `is`, it sits at the same depth
@@ -121,6 +162,9 @@ pub fn normalize_indent(src: &str, cfg: &Config) -> String {
                 &mut paren_stack,
                 &mut expect_is_opens_block,
                 &mut expect_begin_opens_block,
+                &mut case_branch_open,
+                &mut expect_case_is,
+                cfg,
                 &multiline_parens,
                 line,
                 src,
@@ -189,6 +233,9 @@ fn update_depth(
     paren_stack: &mut Vec<bool>,
     expect_is_opens_block: &mut bool,
     expect_begin_opens_block: &mut bool,
+    case_branch_open: &mut Vec<bool>,
+    expect_case_is: &mut bool,
+    cfg: &Config,
     multiline_parens: &HashSet<usize>,
     line: &[Token],
     src: &str,
@@ -196,8 +243,23 @@ fn update_depth(
     let _ = (all_tokens, src); // reserved for future context-sensitive lookups
     match tok.kind {
         // ───── Block introducers that open on `is` ─────
+        TokenKind::Keyword(Keyword::Case) => {
+            if !preceded_by_end_in_line(line, idx_in_line) {
+                *expect_is_opens_block = true;
+                if cfg.case_branch_indent {
+                    *expect_case_is = true;
+                }
+            } else if cfg.case_branch_indent {
+                // `end case` — close the when branch (if any) and
+                // pop the case context.
+                if let Some(true) = case_branch_open.last() {
+                    *depth -= 1;
+                }
+                case_branch_open.pop();
+            }
+        }
         TokenKind::Keyword(
-            Keyword::Entity | Keyword::Architecture | Keyword::Package | Keyword::Case,
+            Keyword::Entity | Keyword::Architecture | Keyword::Package,
         ) => {
             // Skip if this is part of `end <kw>` — `end` is the
             // previous significant token in the line OR earlier.
@@ -219,6 +281,10 @@ fn update_depth(
                 *depth += 1;
                 *expect_is_opens_block = false;
                 *expect_begin_opens_block = false;
+                if *expect_case_is {
+                    case_branch_open.push(false);
+                    *expect_case_is = false;
+                }
             }
         }
         TokenKind::Keyword(Keyword::Begin) => {
@@ -255,6 +321,23 @@ fn update_depth(
         // body depth automatically because there's no `then` to push.
         TokenKind::Keyword(Keyword::Else) => {
             // No state change.
+        }
+        // `when` inside a case opens (or transitions to) a new
+        // branch body. The line itself is rendered at the case-body
+        // depth via the -1 adjustment when a previous branch is
+        // already open.
+        TokenKind::Keyword(Keyword::When) => {
+            if cfg.case_branch_indent
+                && let Some(top) = case_branch_open.last_mut()
+            {
+                if *top {
+                    // Close the previous branch, open a new one.
+                    *depth -= 1;
+                } else {
+                    *top = true;
+                }
+                *depth += 1;
+            }
         }
         // `elsif` must pop one level here, because the upcoming `then`
         // on the same line will push *unconditionally* and we don't
@@ -312,6 +395,7 @@ mod tests {
             indent_style: IndentStyle::Spaces,
             indent_width: width,
             keyword_case: crate::config::KeywordCase::Preserve,
+            ..Config::default()
         };
         normalize_indent(src, &cfg)
     }
@@ -427,6 +511,7 @@ end t;
             indent_style: IndentStyle::Preserve,
             indent_width: 4,
             keyword_case: crate::config::KeywordCase::Preserve,
+            ..Config::default()
         };
         let src = "  weird   indent\n\t\tmore weird\n";
         assert_eq!(normalize_indent(src, &cfg), src);
@@ -438,6 +523,7 @@ end t;
             indent_style: IndentStyle::Tabs,
             indent_width: 4,
             keyword_case: crate::config::KeywordCase::Preserve,
+            ..Config::default()
         };
         let src = "\
 entity t is

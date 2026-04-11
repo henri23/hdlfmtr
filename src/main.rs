@@ -45,6 +45,21 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = KeywordCaseArg::Lower)]
     keyword_case: KeywordCaseArg,
 
+    /// Disable vertical alignment of consecutive declaration lines
+    /// (port lists, signal/variable/constant declarations).
+    #[arg(long)]
+    no_align: bool,
+
+    /// Disable extra indenting of `when` branch bodies inside case
+    /// statements.
+    #[arg(long)]
+    no_case_branch_indent: bool,
+
+    /// Disable alphabetical sorting of consecutive `use X.Y.Z;`
+    /// clauses.
+    #[arg(long)]
+    no_sort_uses: bool,
+
     /// Check whether the input is already formatted. Exits 1 if it
     /// would be changed. Does not write any output.
     #[arg(long)]
@@ -104,6 +119,9 @@ fn run() -> Result<ExitCode> {
         indent_style: cli.indent_style.into(),
         indent_width: cli.indent_width,
         keyword_case: cli.keyword_case.into(),
+        align_declarations: !cli.no_align,
+        case_branch_indent: !cli.no_case_branch_indent,
+        sort_use_clauses: !cli.no_sort_uses,
     };
 
     let source = match &cli.file {

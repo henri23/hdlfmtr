@@ -1,0 +1,61 @@
+name: Bug report
+description: Report a problem with hdlfmtr
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. The most useful
+        bug report includes a minimal VHDL snippet that triggers the
+        problem and the exact command (or editor configuration) you
+        used.
+  - type: textarea
+    id: input
+    attributes:
+      label: VHDL input
+      description: A minimal snippet that demonstrates the bug. Please trim it down to the smallest example that still misbehaves.
+      render: vhdl
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected output
+      description: What `hdlfmtr` should have produced.
+      render: vhdl
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual output
+      description: What `hdlfmtr` actually produced.
+      render: vhdl
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Invocation
+      description: The exact command or editor configuration. e.g. `hdlfmtr --indent-style=spaces --indent-width=2 file.vhd`
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: hdlfmtr version
+      description: Output of `hdlfmtr --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: true

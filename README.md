@@ -77,6 +77,9 @@ hdlfmtr --check module.vhd
                            tabs, hint passed through to editor
                            integrations as a tabstop value
 --keyword-case <CASE>      lower (default) | upper | preserve
+--no-align                 disable vertical alignment of declarations
+--no-case-branch-indent    disable extra indent for case `when` bodies
+--no-sort-uses             disable sorting of consecutive `use` clauses
 --check                    exit 1 if reformatting would change input
 --stdin-filepath <PATH>    path to use for diagnostics when reading
                            from stdin
@@ -100,9 +103,12 @@ module knows where to find it afterwards.
   config = function()
     require("hdlfmtr").setup({
       -- Formatter options (forwarded to the binary as CLI flags).
-      indent_style = "tabs",   -- "tabs" | "spaces" | "preserve"
-      indent_width = 4,        -- spaces per level, or tabstop hint
-      keyword_case = "lower",  -- "lower" | "upper" | "preserve"
+      indent_style       = "tabs",  -- "tabs" | "spaces" | "preserve"
+      indent_width       = 4,       -- spaces per level, or tabstop hint
+      keyword_case       = "lower", -- "lower" | "upper" | "preserve"
+      align_declarations = true,    -- vertically align port/signal lists
+      case_branch_indent = true,    -- indent case `when` branch bodies
+      sort_use_clauses   = true,    -- sort consecutive `use` clauses
 
       -- Editor integration.
       register_with_conform = true,  -- register the formatter def
@@ -129,7 +135,10 @@ install time. After install you also get:
 | --- | --- | --- |
 | `indent_style` | `"tabs"` | `"tabs"`, `"spaces"`, or `"preserve"` to skip the indent pass entirely. |
 | `indent_width` | `4` | When `indent_style = "spaces"`, the number of spaces per level. When `"tabs"`, the tabstop / shiftwidth applied to vhdl buffers (cosmetic). |
-| `keyword_case` | `"lower"` | `"lower"`, `"upper"`, or `"preserve"`. Identifiers are never touched. |
+| `keyword_case` | `"lower"` | `"lower"`, `"upper"`, or `"preserve"`. Identifiers are never touched, except for a small allowlist of predefined names (`std_logic`, `bit_vector`, `integer`, `ieee`, ...). |
+| `align_declarations` | `true` | Vertically align consecutive port / signal / variable / constant declaration lines so that names, `:`, modes, types, and trailing comments line up in columns. |
+| `case_branch_indent` | `true` | Inside `case` statements, indent the body of each `when` branch one level deeper than the `when` keyword itself. The other style (`when` and body at the same depth) is reachable with `false`. |
+| `sort_use_clauses` | `true` | Alphabetically sort consecutive `use X.Y.Z;` lines. `library` clauses are never reordered. |
 | `register_with_conform` | `true` | Register `hdlfmtr` as a conform.nvim formatter definition (no effect if conform is not loaded). |
 | `auto_register_vhdl` | `false` | Also prepend `hdlfmtr` to `conform.formatters_by_ft.vhdl`. Set this if you want a true zero-config install. |
 | `set_buffer_options` | `true` | On entering a vhdl buffer, set `tabstop`, `softtabstop`, `shiftwidth`, `expandtab` to match the formatter config. Disable if you manage these yourself. |
@@ -203,26 +212,30 @@ public `format` API stays stable as the implementation deepens.
       keyword recognition, comment and string handling, character
       literal vs. attribute-tick disambiguation, bit-string and based
       literals.
-- [x] **Process-label insertion** (`process_016`, `process_018`).
+- [x] **Process-label insertion** (`process_016`, `process_018`),
+      including `postponed process`, `process_018` in isolation, and
+      collision-safe synthetic names.
 - [x] **Indent normalization.** Tab-default, spaces-configurable.
       Stack-based depth tracking across structural blocks and
       multi-line parens.
-- [x] **Keyword case folding.** Lower / upper / preserve. Identifiers
-      untouched.
+- [x] **Case-statement `when` indenting.** Configurable.
+- [x] **Keyword case folding.** Lower / upper / preserve, with
+      predefined identifier folding for `std_logic`, `bit_vector`,
+      `ieee`, and friends.
+- [x] **Vertical alignment of port / signal / variable declarations.**
+- [x] **Use-clause sorting.**
 - [x] **Trailing-whitespace removal & final-newline.**
-- [ ] **Case-statement `when` indenting.** Today `when` lines render at
-      the case body depth without an extra level for branch bodies.
-- [ ] **Predefined identifier folding** (`std_logic`, `bit_vector`,
-      etc) so a mixed-case file ends up consistently lowercased.
-- [ ] **Port and signal-list alignment.** The single biggest source of
-      churn in hand-edited VHDL.
-- [ ] **Comment reflow** for line and block comments.
-- [ ] **Library and use-clause sorting.**
+- [ ] **Continuation indentation** for expressions that span multiple
+      lines. Needs lightweight expression parsing.
+- [ ] **Comment reflow** for long line and block comments.
+- [ ] **Configuration file** (`hdlfmtr.toml`) with the
+      `cli > project > home > defaults` precedence order.
+- [ ] **Range formatting** for editor "format selection" commands.
+- [ ] **Prebuilt release binaries** via GitHub Releases.
+- [ ] **Mason package recipe** (depends on releases).
 - [ ] **Full parser + Wadler-style pretty-printer.** When the rewrite
       passes have outgrown what a token-stream rewriter can do
-      reliably, switch the engine.
-- [ ] **Configuration file** (`hdlfmtr.toml`).
-- [ ] **Range formatting** for editor "format selection" commands.
+      reliably, switch the engine. Not on the immediate horizon.
 
 ## License
 

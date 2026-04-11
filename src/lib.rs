@@ -7,6 +7,7 @@
 //! minimal so the underlying implementation can be replaced without
 //! breaking callers.
 
+pub mod align;
 pub mod config;
 pub mod format;
 pub mod indent;

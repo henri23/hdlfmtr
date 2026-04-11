@@ -32,6 +32,18 @@ pub struct Config {
     pub indent_width: usize,
     /// Case to apply to reserved words.
     pub keyword_case: KeywordCase,
+    /// Whether to vertically align consecutive declaration lines
+    /// (port lists, signal/variable/constant declarations) so that
+    /// names, `:`, mode keywords, types, and trailing comments line
+    /// up in columns. Default `true`.
+    pub align_declarations: bool,
+    /// Whether `when` branches inside a `case` statement add an
+    /// extra indent level to their body. Default `true` (the more
+    /// common modern style).
+    pub case_branch_indent: bool,
+    /// Whether to sort consecutive `use X.Y.Z;` clauses
+    /// alphabetically. Default `true`.
+    pub sort_use_clauses: bool,
 }
 
 impl Default for Config {
@@ -40,6 +52,9 @@ impl Default for Config {
             indent_style: IndentStyle::Tabs,
             indent_width: 4,
             keyword_case: KeywordCase::Lower,
+            align_declarations: true,
+            case_branch_indent: true,
+            sort_use_clauses: true,
         }
     }
 }

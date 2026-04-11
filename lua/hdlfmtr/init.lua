@@ -44,6 +44,20 @@ local DEFAULTS = {
 
   -- Case to apply to reserved words: "lower" | "upper" | "preserve".
   keyword_case = "lower",
+
+  -- Vertically align consecutive port / signal / generic / variable
+  -- declarations so the names, `:`, modes, types and trailing comments
+  -- line up in columns. Set false to disable.
+  align_declarations = true,
+
+  -- Indent `when` branch bodies one extra level inside case statements.
+  -- Set false for the "flat" style where bodies sit at the same depth
+  -- as the `when` keyword.
+  case_branch_indent = true,
+
+  -- Sort consecutive `use X.Y.Z;` clauses alphabetically. Set false to
+  -- preserve the original order.
+  sort_use_clauses = true,
 }
 
 local config = vim.deepcopy(DEFAULTS)
@@ -94,6 +108,15 @@ local function build_args(filename)
   table.insert(args, tostring(config.indent_width))
   table.insert(args, "--keyword-case")
   table.insert(args, config.keyword_case)
+  if config.align_declarations == false then
+    table.insert(args, "--no-align")
+  end
+  if config.case_branch_indent == false then
+    table.insert(args, "--no-case-branch-indent")
+  end
+  if config.sort_use_clauses == false then
+    table.insert(args, "--no-sort-uses")
+  end
   return args
 end
 

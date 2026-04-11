@@ -38,6 +38,9 @@ fn labels_only() -> Config {
         indent_style: IndentStyle::Preserve,
         indent_width: 4,
         keyword_case: KeywordCase::Preserve,
+        align_declarations: false,
+        case_branch_indent: false,
+        sort_use_clauses: false,
     }
 }
 
@@ -97,6 +100,7 @@ fn spaces_indent_with_width_2() {
         indent_style: IndentStyle::Spaces,
         indent_width: 2,
         keyword_case: KeywordCase::Preserve,
+        ..Config::default()
     };
     let out = hdlfmtr::format(XILINX_TEMPLATE_UNLABELED, &cfg).unwrap();
     // No tabs at all.
@@ -114,6 +118,7 @@ fn upper_keyword_case() {
         indent_style: IndentStyle::Preserve,
         indent_width: 4,
         keyword_case: KeywordCase::Upper,
+        ..Config::default()
     };
     let out = hdlfmtr::format(XILINX_TEMPLATE_UNLABELED, &cfg).unwrap();
     assert!(out.contains("ENTITY"), "expected uppercased keyword:\n{out}");
