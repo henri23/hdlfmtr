@@ -61,7 +61,45 @@ hdlfmtr --check module.vhd
 
 ## Editor integration
 
-### Neovim — conform.nvim
+### Neovim — lazy.nvim (recommended)
+
+`hdlfmtr` ships its own Neovim plugin layer, so you can install it as
+a regular lazy.nvim spec and skip the manual cargo path wiring. The
+`build` hook compiles the Rust binary at install time and the Lua
+module knows where to find it afterwards.
+
+```lua
+{
+  "henri23/hdlfmtr",
+  build = "cargo build --release",
+  ft = "vhdl",
+  dependencies = { "stevearc/conform.nvim" }, -- optional
+  config = function()
+    require("hdlfmtr").setup({
+      -- Set true to also prepend hdlfmtr to conform's
+      -- formatters_by_ft.vhdl, so format-on-save Just Works without
+      -- further config. Defaults to false because chaining with vsg
+      -- (see below) usually wants explicit ordering.
+      auto_register_vhdl = false,
+    })
+  end,
+}
+```
+
+**Prerequisite:** a Rust toolchain (`cargo` on PATH). Prebuilt binaries
+are on the roadmap; until then `cargo build --release` runs once at
+install time. After install you also get:
+
+- `:HdlFmt` — format the current buffer.
+- `require("hdlfmtr").format_buffer(bufnr)` — programmatic API.
+- `require("hdlfmtr").binary()` — absolute path to the bundled binary,
+  in case you need it for tooling.
+
+### Neovim — manual conform.nvim wiring
+
+If you don't want the plugin layer and prefer to install `hdlfmtr` as
+a system binary (`cargo install --path .`), point conform.nvim at it
+directly:
 
 ```lua
 require("conform").setup({
@@ -83,9 +121,9 @@ require("conform").formatters.hdlfmtr = {
 
 ### Composing with vsg
 
-While hdlfmtr's pretty-printer is still being built, you may want to run
-both: hdlfmtr first to fix the labels vsg refuses to fix, then vsg for
-its full set of style rewrites. With conform.nvim:
+While hdlfmtr's pretty-printer is still being built, you may want to
+run both: hdlfmtr first to fix the labels vsg refuses to fix, then vsg
+for its full set of style rewrites. With conform.nvim:
 
 ```lua
 formatters_by_ft = {
