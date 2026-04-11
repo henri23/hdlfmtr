@@ -32,12 +32,19 @@ pub fn format(src: &str, cfg: &Config) -> Result<String, FormatError> {
     let after_numeric = format_numeric_literals(&after_case);
     // Pass 4: operator spacing normalization.
     let after_ops = normalize_operator_spacing(&after_numeric);
+    // Pass 4b: comma spacing.
+    let after_commas = normalize_comma_spacing(&after_ops);
+    // Pass 4c: keyword-paren spacing (process / port / generic / map).
+    let after_paren = normalize_keyword_paren_spacing(&after_commas);
+    // Pass 4d: strip horizontal whitespace immediately inside `()`
+    // on single-line parens.
+    let after_paren = strip_paren_padding(&after_paren);
     // Pass 5: sort consecutive library and use clauses.
     let after_sort = if cfg.sort_use_clauses {
-        let s = sort_library_clauses(&after_ops);
+        let s = sort_library_clauses(&after_paren);
         sort_use_clauses(&s)
     } else {
-        after_ops
+        after_paren
     };
     // Pass 6: indent.
     let after_indent = normalize_indent(&after_sort, cfg);
@@ -47,11 +54,22 @@ pub fn format(src: &str, cfg: &Config) -> Result<String, FormatError> {
     } else {
         after_indent
     };
+    // Pass 7b: align continuation lines starting with `&`.
+    let after_concat = align_concatenation_continuations(&after_align);
+    // Pass 7b2: align `when ... else` keywords across consecutive
+    // conditional-assignment continuation lines.
+    let after_when = align_when_else_chains(&after_concat);
+    // Pass 7c: optional collapse of trivially-empty constructs.
+    let after_collapsed = if cfg.collapse_trivial {
+        collapse_trivial_constructs(&after_when)
+    } else {
+        after_when
+    };
     // Pass 8: insert stylish blank lines between top-level statements.
     let after_stylish = if cfg.stylish_blank_lines {
-        insert_stylish_blank_lines(&after_align)
+        insert_stylish_blank_lines(&after_collapsed)
     } else {
-        after_align
+        after_collapsed
     };
     // Pass 9: collapse runs of 3+ blank lines.
     let after_collapse = collapse_blank_lines(&after_stylish);
@@ -309,12 +327,28 @@ fn sort_use_clauses(src: &str) -> String {
                 j += 1;
             }
             if j - i >= 2 {
-                let mut group: Vec<&str> = lines[i..j].to_vec();
+                let mut group: Vec<String> = lines[i..j]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
                 // Sort by the trimmed lowercase content so case
                 // doesn't influence ordering.
                 group.sort_by_key(|s| s.trim().to_ascii_lowercase());
+                // Insert a blank line between use clauses whose
+                // library prefix differs (everything before the first
+                // `.`). This is the isort-style grouping.
+                let mut prev_lib: Option<String> = None;
                 for s in &group {
+                    let lib = use_library_prefix(s);
+                    if let Some(prev) = &prev_lib
+                        && lib.as_deref() != Some(prev.as_str())
+                    {
+                        out.push('\n');
+                    }
                     out.push_str(s);
+                    if let Some(l) = lib {
+                        prev_lib = Some(l);
+                    }
                 }
                 i = j;
                 continue;
@@ -324,6 +358,19 @@ fn sort_use_clauses(src: &str) -> String {
         i += 1;
     }
     out
+}
+
+/// Extract the library name from a `use foo.bar.baz;` line. Returns
+/// the lowercased prefix (`foo`), or None if the line doesn't parse.
+fn use_library_prefix(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    let lower = trimmed.to_ascii_lowercase();
+    if !lower.starts_with("use ") {
+        return None;
+    }
+    let after = &trimmed[4..];
+    let dot = after.find('.')?;
+    Some(after[..dot].trim().to_ascii_lowercase())
 }
 
 fn is_use_clause(line: &str) -> bool {
@@ -395,6 +442,7 @@ fn normalize_operator_spacing(src: &str) -> String {
                 | TokenKind::GE
                 | TokenKind::NEq
                 | TokenKind::Power
+                | TokenKind::Colon
         );
         if !is_op {
             continue;
@@ -450,6 +498,378 @@ fn any_newline_between(tokens: &[Token], a: usize, b: usize) -> bool {
     tokens[lo + 1..hi]
         .iter()
         .any(|t| t.kind == TokenKind::Newline)
+}
+
+// ───────────────────────── comma spacing ─────────────────────────
+
+/// Ensure every comma has zero space before it and exactly one space
+/// after it, when the next significant token is on the same line.
+/// Multi-line lists with the comma at end-of-line are left alone -
+/// the newline already separates the values.
+fn normalize_comma_spacing(src: &str) -> String {
+    let tokens = tokenize(src);
+    let mut out = String::with_capacity(src.len());
+    let mut cursor = 0usize;
+    for (i, tok) in tokens.iter().enumerate() {
+        if tok.kind != TokenKind::Comma {
+            continue;
+        }
+        // Strip any whitespace immediately before the comma.
+        if i > 0 && tokens[i - 1].kind == TokenKind::Whitespace {
+            // Emit src up to the start of that whitespace, skipping it.
+            out.push_str(&src[cursor..tokens[i - 1].start]);
+            cursor = tok.start;
+        }
+        // Look at the next significant token.
+        let next = next_significant_idx(&tokens, i);
+        let Some(n) = next else {
+            continue;
+        };
+        if any_newline_between(&tokens, i, n) {
+            continue;
+        }
+        // Replace whatever's between the comma and the next token
+        // with a single space.
+        out.push_str(&src[cursor..tok.end]);
+        out.push(' ');
+        cursor = tokens[n].start;
+    }
+    out.push_str(&src[cursor..]);
+    out
+}
+
+// ───────────────────────── keyword-paren spacing ─────────────────────────
+
+/// Ensure a space exists between certain keywords and the immediately
+/// following `(`. Specifically:
+///
+///   • `process(` -> `process (`
+///   • `port(`    -> `port (`
+///   • `generic(` -> `generic (`
+///   • `port map(` / `generic map(` -> `port map (` / `generic map (`
+///
+/// Conservative: only fires on these keywords. Function calls like
+/// `myfunc(arg)` are intentionally untouched.
+fn normalize_keyword_paren_spacing(src: &str) -> String {
+    let tokens = tokenize(src);
+    let mut out = String::with_capacity(src.len());
+    let mut cursor = 0usize;
+    for (i, tok) in tokens.iter().enumerate() {
+        if tok.kind != TokenKind::LParen {
+            continue;
+        }
+        // Find the previous *significant* token (skipping any
+        // existing whitespace) so we can normalize even when there's
+        // already wonky spacing between the keyword and `(`.
+        let Some(prev_idx) = previous_significant_idx(&tokens, i) else {
+            continue;
+        };
+        // Don't touch cross-line cases.
+        if any_newline_between(&tokens, prev_idx, i) {
+            continue;
+        }
+        let prev = &tokens[prev_idx];
+        let prev_text = prev.text(src).to_ascii_lowercase();
+        let mut is_target = matches!(
+            prev_text.as_str(),
+            "process" | "port" | "generic"
+        );
+        if prev_text == "map" {
+            // Verify the previous-previous significant is port or generic.
+            let pp = previous_significant_idx(&tokens, prev_idx);
+            is_target = pp
+                .map(|p| {
+                    let t = tokens[p].text(src).to_ascii_lowercase();
+                    t == "port" || t == "generic"
+                })
+                .unwrap_or(false);
+        }
+        if !is_target {
+            continue;
+        }
+        // Replace whatever's between prev.end and tok.start with
+        // exactly one space, regardless of what was there before.
+        out.push_str(&src[cursor..prev.end]);
+        out.push(' ');
+        cursor = tok.start;
+    }
+    out.push_str(&src[cursor..]);
+    out
+}
+
+// ───────────────────────── paren padding removal ─────────────────────────
+
+/// Remove horizontal whitespace immediately after `(` and immediately
+/// before `)` on single-line parens. Multi-line parens (where the
+/// next significant token after `(` is on a later line) are left
+/// alone - the layout there is intentional.
+fn strip_paren_padding(src: &str) -> String {
+    let tokens = tokenize(src);
+    let mut out = String::with_capacity(src.len());
+    let mut cursor = 0usize;
+    for (i, tok) in tokens.iter().enumerate() {
+        match tok.kind {
+            TokenKind::LParen => {
+                // If the next non-whitespace token on the same line
+                // exists and there's whitespace right after `(`,
+                // strip that whitespace.
+                if i + 1 < tokens.len()
+                    && tokens[i + 1].kind == TokenKind::Whitespace
+                {
+                    // Don't strip if a newline immediately follows
+                    // the whitespace - that's intentional multi-line.
+                    let after = i + 2;
+                    if after < tokens.len()
+                        && tokens[after].kind != TokenKind::Newline
+                    {
+                        out.push_str(&src[cursor..tok.end]);
+                        cursor = tokens[i + 2].start;
+                    }
+                }
+            }
+            TokenKind::RParen => {
+                if i >= 1 && tokens[i - 1].kind == TokenKind::Whitespace {
+                    // Skip if the token before the whitespace is a
+                    // newline (intentional multi-line indent).
+                    if i >= 2 && tokens[i - 2].kind == TokenKind::Newline {
+                        continue;
+                    }
+                    out.push_str(&src[cursor..tokens[i - 1].start]);
+                    cursor = tok.start;
+                }
+            }
+            _ => {}
+        }
+    }
+    out.push_str(&src[cursor..]);
+    out
+}
+
+// ───────────────────────── concatenation alignment ─────────────────────────
+
+/// Align consecutive continuation lines that begin with `&` so the
+/// `&` operators all sit at the same column. The continuation lines
+/// are detected by inspecting the first non-whitespace token: if it's
+/// `&`, the line is treated as a continuation.
+///
+/// The pass groups runs of consecutive continuation lines and rewrites
+/// each line so its `&` is at column = max(other_continuation_indent).
+/// Lines without a `&` continuation are left alone.
+///
+/// This is a small, conservative cousin of full continuation
+/// indentation; it doesn't try to align the `&` with the parent
+/// expression's `<=` or anything semantic, only with each other.
+fn align_concatenation_continuations(src: &str) -> String {
+    let lines: Vec<&str> = src.split_inclusive('\n').collect();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    while i < lines.len() {
+        if line_starts_with_amp(lines[i]) {
+            // Find the end of the continuation run.
+            let mut j = i + 1;
+            while j < lines.len() && line_starts_with_amp(lines[j]) {
+                j += 1;
+            }
+            // Pick the longest leading-whitespace string in the group
+            // as the canonical indent. This preserves whatever mix of
+            // tabs and spaces the source already used.
+            let canonical_indent: String = lines[i..j]
+                .iter()
+                .map(leading_whitespace)
+                .max_by_key(|s| s.len())
+                .unwrap_or_default();
+            for line in &lines[i..j] {
+                let body = line.trim_start();
+                out.push_str(&canonical_indent);
+                out.push_str(body);
+            }
+            i = j;
+            continue;
+        }
+        out.push_str(lines[i]);
+        i += 1;
+    }
+    out
+}
+
+fn line_starts_with_amp(line: &str) -> bool {
+    line.trim_start().starts_with('&')
+}
+
+fn leading_whitespace(line: &&str) -> String {
+    line.chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect()
+}
+
+// ───────────────────────── single-line collapse ─────────────────────────
+
+/// Collapse trivially-empty constructs onto a single line. Currently
+/// handles `entity X is end [entity] [X];` and `package X is end
+/// [package] [X];` when there's nothing between the `is` and the
+/// `end` except whitespace and blank lines.
+///
+/// Off by default - the `Config.collapse_trivial` flag enables it.
+fn collapse_trivial_constructs(src: &str) -> String {
+    let lines: Vec<&str> = src.split_inclusive('\n').collect();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    while i < lines.len() {
+        if let Some((collapsed, advance)) = try_collapse_at(&lines, i) {
+            out.push_str(&collapsed);
+            i += advance;
+            continue;
+        }
+        out.push_str(lines[i]);
+        i += 1;
+    }
+    out
+}
+
+fn try_collapse_at(lines: &[&str], start: usize) -> Option<(String, usize)> {
+    let line = lines[start];
+    let trimmed = line.trim_end_matches(['\n', '\r']);
+    let lower = trimmed.trim_start().to_ascii_lowercase();
+
+    // We accept entity / package / architecture intros that end with
+    // `is` and have an empty body before the matching `end`.
+    let opens_with = ["entity ", "package ", "architecture "];
+    let _intro_kind = opens_with
+        .iter()
+        .find(|p| lower.starts_with(*p))
+        .copied()?;
+    if !lower.ends_with(" is") {
+        return None;
+    }
+
+    // Walk forward, skipping blank lines, until we find an `end` line.
+    let mut j = start + 1;
+    while j < lines.len() && lines[j].trim().is_empty() {
+        j += 1;
+    }
+    if j >= lines.len() {
+        return None;
+    }
+    let next = lines[j].trim_end_matches(['\n', '\r']);
+    let next_lower = next.trim_start().to_ascii_lowercase();
+    if !next_lower.starts_with("end ") && next_lower != "end;" {
+        return None;
+    }
+    // Don't collapse `end if` / `end loop` / `end case` etc.
+    let bad_ends = [
+        "end if",
+        "end loop",
+        "end case",
+        "end record",
+        "end block",
+        "end generate",
+        "end process",
+    ];
+    if bad_ends.iter().any(|b| next_lower.starts_with(b)) {
+        return None;
+    }
+    // Build the collapsed line: indent of original + intro + space + end body.
+    let indent: String = trimmed
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect();
+    let intro_body = trimmed.trim_start();
+    let end_body = next.trim_start();
+    let collapsed = format!("{}{} {}\n", indent, intro_body, end_body);
+    Some((collapsed, j - start + 1))
+}
+
+// ───────────────────────── conditional assignment alignment ─────────────────────────
+
+/// Align the `when` keyword across consecutive lines of a conditional
+/// signal assignment:
+///
+/// ```vhdl
+/// y <= longer_expr when sel = "00" else
+///      short       when sel = "01" else
+///      c           when sel = "10" else
+///      d;
+/// ```
+///
+/// The pass groups consecutive lines that contain a `when` keyword
+/// somewhere *after* the line's first significant token (i.e. lines
+/// where `when` is *not* the leading keyword - that would be a case
+/// branch, which is handled by the alignment pass via the arrow
+/// path). For each group it finds the rightmost `when` position and
+/// pads shorter lines with spaces just before their `when`.
+fn align_when_else_chains(src: &str) -> String {
+    let tokens = tokenize(src);
+    let lines: Vec<&str> = src.split_inclusive('\n').collect();
+
+    // Per-line byte offsets so we can convert token positions into
+    // line-relative columns.
+    let mut line_starts: Vec<usize> = Vec::with_capacity(lines.len() + 1);
+    let mut cursor = 0usize;
+    for line in &lines {
+        line_starts.push(cursor);
+        cursor += line.len();
+    }
+
+    // For each line, the byte position (within the line) of its first
+    // mid-line `when` keyword, or None if the line has no such token.
+    let when_pos: Vec<Option<usize>> = lines
+        .iter()
+        .enumerate()
+        .map(|(i, line)| {
+            let line_start = line_starts[i];
+            let line_end = line_start + line.len();
+            // First significant token on this line.
+            let first_sig = tokens
+                .iter()
+                .find(|t| t.start >= line_start && t.start < line_end && !t.is_trivia());
+            if let Some(t) = first_sig
+                && t.kind == TokenKind::Keyword(Keyword::When)
+            {
+                return None; // case-branch line, leave alone
+            }
+            // First mid-line When.
+            tokens
+                .iter()
+                .find(|t| {
+                    t.kind == TokenKind::Keyword(Keyword::When)
+                        && t.start >= line_start
+                        && t.start < line_end
+                })
+                .map(|t| t.start - line_start)
+        })
+        .collect();
+
+    let mut out = String::with_capacity(src.len() + 64);
+    let mut i = 0;
+    while i < lines.len() {
+        if when_pos[i].is_some() {
+            let mut j = i + 1;
+            while j < lines.len() && when_pos[j].is_some() {
+                j += 1;
+            }
+            if j - i >= 2 {
+                let max_pos = (i..j).map(|k| when_pos[k].unwrap()).max().unwrap();
+                for k in i..j {
+                    let line = lines[k];
+                    let pos = when_pos[k].unwrap();
+                    if pos < max_pos {
+                        out.push_str(&line[..pos]);
+                        for _ in pos..max_pos {
+                            out.push(' ');
+                        }
+                        out.push_str(&line[pos..]);
+                    } else {
+                        out.push_str(line);
+                    }
+                }
+                i = j;
+                continue;
+            }
+        }
+        out.push_str(lines[i]);
+        i += 1;
+    }
+    out
 }
 
 // ───────────────────────── stylish blank lines ─────────────────────────
@@ -743,6 +1163,7 @@ mod tests {
             case_branch_indent: false,
             sort_use_clauses: false,
             stylish_blank_lines: false,
+            collapse_trivial: false,
         }
     }
 
@@ -771,7 +1192,7 @@ end rtl;
         let src = "\
 architecture rtl of t is
 begin
-  my_proc : process(clk)
+  my_proc : process (clk)
   begin
   end process my_proc;
 end rtl;
@@ -868,6 +1289,117 @@ end rtl;
     }
 
     #[test]
+    fn concatenation_continuations_are_aligned() {
+        let src = "\
+\tout_bus <= byte0
+\t   & byte1
+\t       & byte2
+\t & byte3;
+";
+        let out = format(src, &Config::default()).unwrap();
+        // All `&` lines should sit at the same indent (the deepest of
+        // the original group).
+        let amp_indents: Vec<&str> = out
+            .lines()
+            .filter(|l| l.trim_start().starts_with('&'))
+            .map(|l| {
+                let stop = l.find(|c: char| c != ' ' && c != '\t').unwrap_or(l.len());
+                &l[..stop]
+            })
+            .collect();
+        assert!(amp_indents.len() >= 2);
+        for w in amp_indents.windows(2) {
+            assert_eq!(w[0], w[1], "concatenation lines have different indents");
+        }
+    }
+
+    #[test]
+    fn aligns_when_else_chain() {
+        let src = "\
+y <= longer when sel = \"00\" else
+short when sel = \"01\" else
+c when sel = \"10\" else
+d;
+";
+        let cfg = Config {
+            indent_style: IndentStyle::Preserve,
+            keyword_case: KeywordCase::Preserve,
+            align_declarations: false,
+            stylish_blank_lines: false,
+            sort_use_clauses: false,
+            ..Config::default()
+        };
+        let out = format(src, &cfg).unwrap();
+        // Each `when` should appear at the same column.
+        let lines: Vec<&str> = out.lines().collect();
+        let when_positions: Vec<usize> = lines
+            .iter()
+            .filter_map(|l| l.find(" when "))
+            .collect();
+        assert!(when_positions.len() >= 3, "expected 3+ when lines:\n{out}");
+        for w in when_positions.windows(2) {
+            assert_eq!(w[0], w[1], "when columns differ:\n{out}");
+        }
+    }
+
+    #[test]
+    fn case_when_branches_are_not_treated_as_when_else_chain() {
+        let src = "\
+case sel is
+  when '0' => y <= '1';
+  when '1' => y <= '0';
+end case;
+";
+        let cfg = Config {
+            indent_style: IndentStyle::Preserve,
+            keyword_case: KeywordCase::Preserve,
+            align_declarations: false,
+            stylish_blank_lines: false,
+            sort_use_clauses: false,
+            ..Config::default()
+        };
+        let out = format(src, &cfg).unwrap();
+        // The case branches must keep their original indent (no
+        // accidental padding from the when-else aligner).
+        assert_eq!(out, src);
+    }
+
+    #[test]
+    fn collapse_trivial_off_by_default() {
+        let src = "entity t is\nend t;\n";
+        let out = format(src, &Config::default()).unwrap();
+        // Default config keeps the multi-line form.
+        assert!(out.contains("entity t is\nend t;"));
+    }
+
+    #[test]
+    fn collapse_trivial_when_enabled() {
+        let cfg = Config {
+            collapse_trivial: true,
+            ..Config::default()
+        };
+        let src = "entity t is\nend t;\n";
+        let out = format(src, &cfg).unwrap();
+        assert!(
+            out.contains("entity t is end t;"),
+            "expected collapsed form, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn collapse_trivial_does_not_touch_non_empty_body() {
+        let cfg = Config {
+            collapse_trivial: true,
+            ..Config::default()
+        };
+        let src = "entity t is\n\tport (a : in std_logic);\nend t;\n";
+        let out = format(src, &cfg).unwrap();
+        // Body is not empty - must NOT be collapsed.
+        assert!(out.contains("port"));
+        assert!(!out.contains("entity t is end t;"));
+    }
+
+    #[test]
     fn already_correct_file_round_trips() {
         let src = "\
 library IEEE;
@@ -878,7 +1410,7 @@ end t;
 
 architecture rtl of t is
 begin
-  sync : process(clk)
+  sync : process (clk)
   begin
   end process sync;
 end rtl;

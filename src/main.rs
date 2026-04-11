@@ -70,6 +70,11 @@ struct Cli {
     #[arg(long)]
     no_stylish_blanks: bool,
 
+    /// Collapse trivially-empty entity / package / architecture
+    /// constructs onto a single line. Off by default.
+    #[arg(long)]
+    collapse_trivial: bool,
+
     /// Check whether the input is already formatted. Exits 1 if it
     /// would be changed. Does not write any output.
     #[arg(long)]
@@ -133,6 +138,7 @@ fn run() -> Result<ExitCode> {
         case_branch_indent: !cli.no_case_branch_indent,
         sort_use_clauses: !cli.no_sort_uses,
         stylish_blank_lines: !cli.no_stylish_blanks,
+        collapse_trivial: cli.collapse_trivial,
     };
 
     let source = match &cli.file {

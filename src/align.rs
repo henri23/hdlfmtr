@@ -501,6 +501,86 @@ end t;
     }
 
     #[test]
+    fn aligns_a_generic_list() {
+        let src = "\
+\tgeneric (
+\t\tWIDTH : integer := 8;
+\t\tDEPTH : integer := 256;
+\t\tINIT_VALUE : std_logic_vector := (others => '0')
+\t);
+";
+        let out = align_declarations(src);
+        let expected = "\
+\tgeneric (
+\t\tWIDTH      : integer := 8;
+\t\tDEPTH      : integer := 256;
+\t\tINIT_VALUE : std_logic_vector := (others => '0')
+\t);
+";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn aligns_record_fields() {
+        let src = "\
+\ttype packet_t is record
+\t\thdr : std_logic_vector(7 downto 0);
+\t\tpayload : std_logic_vector(63 downto 0);
+\t\tcrc : std_logic_vector(15 downto 0);
+\tend record;
+";
+        let out = align_declarations(src);
+        let expected = "\
+\ttype packet_t is record
+\t\thdr     : std_logic_vector(7 downto 0);
+\t\tpayload : std_logic_vector(63 downto 0);
+\t\tcrc     : std_logic_vector(15 downto 0);
+\tend record;
+";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn aligns_multi_line_aggregate() {
+        let src = "\
+\tconstant init : data_t := (
+\t\tfield_a => '0',
+\t\tfield_bb => '1',
+\t\tfield_ccc => 'Z'
+\t);
+";
+        let out = align_declarations(src);
+        let expected = "\
+\tconstant init : data_t := (
+\t\tfield_a   => '0',
+\t\tfield_bb  => '1',
+\t\tfield_ccc => 'Z'
+\t);
+";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn aligns_function_parameter_list() {
+        let src = "\
+\tfunction make_packet (
+\t\thdr : std_logic_vector;
+\t\tpayload : std_logic_vector;
+\t\tcrc : std_logic_vector
+\t) return packet_t is
+";
+        let out = align_declarations(src);
+        let expected = "\
+\tfunction make_packet (
+\t\thdr     : std_logic_vector;
+\t\tpayload : std_logic_vector;
+\t\tcrc     : std_logic_vector
+\t) return packet_t is
+";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
     fn declarations_and_port_maps_do_not_share_a_group() {
         let src = "\
 \ta : in std_logic;

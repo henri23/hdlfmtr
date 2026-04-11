@@ -48,6 +48,11 @@ pub struct Config {
     /// statements inside an architecture body (process / labeled
     /// statement / component instantiation). Default `true`.
     pub stylish_blank_lines: bool,
+    /// Whether to collapse trivially-empty constructs onto a single
+    /// line: `entity X is end X;` becomes `entity X is end X;`.
+    /// Default `false` because it changes structure semantics that
+    /// some users prefer to leave expanded.
+    pub collapse_trivial: bool,
 }
 
 impl Default for Config {
@@ -60,6 +65,7 @@ impl Default for Config {
             case_branch_indent: true,
             sort_use_clauses: true,
             stylish_blank_lines: true,
+            collapse_trivial: false,
         }
     }
 }

@@ -12,8 +12,8 @@ use IEEE.STD_LOGIC_1164.ALL;
 
 entity test is
   port (
-    test_in  : in  std_logic;
-    clk      : in  std_logic;
+    test_in : in std_logic;
+    clk : in std_logic;
     test_out : out std_logic
   );
 end test;
@@ -22,7 +22,7 @@ architecture Behavioral of test is
 
 begin
 
-  process(clk)
+  process (clk)
   begin
     if rising_edge(clk) then
     end if;
@@ -42,6 +42,7 @@ fn labels_only() -> Config {
         case_branch_indent: false,
         sort_use_clauses: false,
         stylish_blank_lines: false,
+        collapse_trivial: false,
     }
 }
 
@@ -49,7 +50,7 @@ fn labels_only() -> Config {
 fn xilinx_template_unlabeled_process_is_labeled() {
     let out = hdlfmtr::format(XILINX_TEMPLATE_UNLABELED, &labels_only()).unwrap();
     assert!(
-        out.contains("u_process_1 : process(clk)"),
+        out.contains("u_process_1 : process (clk)"),
         "head label missing:\n{out}"
     );
     assert!(
