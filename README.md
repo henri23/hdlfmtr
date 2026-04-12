@@ -1,53 +1,101 @@
+<p align="center">
+  <img src="images/logo.png" alt="hdlfmtr logo" width="200">
+</p>
+
 # hdlfmtr
 
-A fast VHDL formatter for editors and CI.
+A fast VHDL formatter and linter for editors and CI.
 
-`hdlfmtr` is a Rust-native command-line tool that reformats VHDL source.
-It is designed to start in single-digit milliseconds, distribute as a
-single static binary, and integrate cleanly with editor plugins that
-follow the prettier-style stdin-to-stdout contract (conform.nvim,
-null-ls, efm-langserver, ALE, VS Code formatters).
+`hdlfmtr` is a Rust-native command-line tool that reformats VHDL source
+and catches common hardware-design bugs. It starts in single-digit
+milliseconds, distributes as a single static binary (or a bundled WASM
+module for VS Code), and integrates with Neovim (lazy.nvim + conform.nvim)
+and Visual Studio Code out of the box.
 
-## Status - honest scope
+## Status
 
-`hdlfmtr` is young but already useful. The current pipeline runs the
-following passes in order:
+The formatter pipeline runs the following passes in order:
 
-1. **Process-label insertion.** Finds unlabeled `process` statements
-   and adds a synthetic `u_process_N` to both the head and the
-   matching `end process`. This is the case VSG's `process_016` /
-   `process_018` rules flag as errors but refuse to auto-fix.
-2. **Keyword case folding.** Reserved words become lowercase by
-   default; configurable to upper or preserve. Identifiers are never
-   touched.
-3. **Indent normalization.** Tabs by default, configurable to spaces.
-   Stack-based depth tracking handles entity / architecture / package
-   / process / function / procedure / if-then-elsif-else / for-loop /
-   while-loop / case / record / block / generate, plus multi-line
-   parentheses for port and generic lists.
-4. **Trailing-whitespace removal.** Always on.
-5. **Final-newline ensuring.** Always on; the file ends with exactly
-   one `\n`.
+1. **Process-label insertion** - finds unlabeled `process` statements
+   and adds a synthetic `u_process_N` to both the head and the matching
+   `end process`. Handles `postponed process`, `process_018` in
+   isolation, and collision-safe synthetic names.
+2. **Keyword case folding** - reserved words and common predefined
+   identifiers (`std_logic`, `bit_vector`, `ieee`, ...) become
+   lowercase by default; configurable to upper or preserve.
+3. **Numeric literal cleanup** - underscore grouping for long integers
+   (`1000000` -> `1_000_000`), uppercase hex in bit-string literals.
+4. **Operator spacing** - one space around `:`, `:=`, `<=`, `=>`,
+   `/=`, `>=`, `**`.
+5. **Comma spacing** - no space before `,`, one space after.
+6. **Keyword-paren spacing** - `process(clk)` -> `process (clk)`,
+   same for `port`, `generic`, `port map`, `generic map`.
+7. **Paren padding removal** - strips whitespace immediately inside
+   `(...)` on single-line parens.
+8. **Library and use-clause sorting** - alphabetical, with blank-line
+   grouping between different libraries.
+9. **Indent normalization** - tabs by default, spaces configurable.
+   Stack-based depth tracking across all structural VHDL blocks and
+   multi-line parentheses, including case-statement `when` branches.
+10. **Vertical alignment** - port / signal / variable / constant /
+    generic / record-field declarations, component port maps
+    (`name => signal`), aggregates, and case `when` branches.
+11. **Concatenation continuation alignment** - `& foo` lines aligned.
+12. **Conditional assignment alignment** - `when ... else` chains
+    aligned vertically.
+13. **Trivial construct collapse** (off by default) - empty
+    `entity X is end X;` collapsed to one line.
+14. **Stylish blank lines** - one blank line between consecutive
+    top-level statements inside architecture bodies.
+15. **Blank-line collapse** - 3+ consecutive blank lines reduced to 1.
+16. **Trailing-whitespace removal.**
+17. **Final-newline ensuring.**
 
-What is intentionally **not yet** done: port-list colon alignment,
-keyword-case-aware predefined identifier folding (`std_logic` etc),
-case-statement `when` indenting, library and use-clause sorting,
-Wadler-style line-width-aware pretty printing. These are on the
-roadmap below.
+**Lint checks** (emitted as JSONL diagnostics to stderr, integrated
+with Neovim's `vim.diagnostic` and VS Code's Problems panel):
 
-Each release ships value at its current size - no six-month parser
-refactor with nothing runnable in the middle.
+- `unused_001` / `unused_002` - signal never read or written
+- `unused_003` / `unused_004` - input port never read / output never assigned
+- `sens_001` - signal read in combinational process not in sensitivity list
+- `clock_001` - `rising_edge(X)` but X not in sensitivity list
+- `driver_001` - signal driven by multiple processes
+- `latch_001` - signal may infer a latch (no default assignment)
+- `reset_001` - inconsistent reset polarity
 
 ## Installation
 
-From source (Rust 1.85+):
+### From source (Rust 1.85+)
 
 ```sh
 cargo install --path .
 ```
 
-A future release will publish prebuilt binaries on GitHub Releases and
-a Mason installer for Neovim.
+### Neovim (lazy.nvim)
+
+```lua
+{
+  "henri23/hdlfmtr",
+  build = "cargo build --release",
+  ft = "vhdl",
+  dependencies = { "stevearc/conform.nvim" }, -- optional
+  config = function()
+    require("hdlfmtr").setup()
+  end,
+}
+```
+
+Requires a Rust toolchain (`cargo` on PATH). The build hook runs once
+at install time.
+
+### VS Code
+
+Install from the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=HenriHaka.hdlfmtr)
+or download the `.vsix` from
+[GitHub Releases](https://github.com/henri23/hdlfmtr/releases).
+
+The VS Code extension bundles a cross-platform WASM build of hdlfmtr -
+**no Rust toolchain or binary install required**. It just works.
 
 ## Usage
 
@@ -80,19 +128,20 @@ hdlfmtr --check module.vhd
 --no-align                 disable vertical alignment of declarations
 --no-case-branch-indent    disable extra indent for case `when` bodies
 --no-sort-uses             disable sorting of consecutive `use` clauses
+--no-stylish-blanks        disable blank-line insertion between processes
+--no-lint                  disable lint diagnostics on stderr
+--collapse-trivial         collapse empty entity/package/architecture
 --check                    exit 1 if reformatting would change input
---stdin-filepath <PATH>    path to use for diagnostics when reading
-                           from stdin
+--stdin-filepath <PATH>    path for diagnostics when reading from stdin
 ```
 
 ## Editor integration
 
 ### Neovim - lazy.nvim (recommended)
 
-`hdlfmtr` ships its own Neovim plugin layer, so you can install it as
-a regular lazy.nvim spec and skip the manual cargo path wiring. The
-`build` hook compiles the Rust binary at install time and the Lua
-module knows where to find it afterwards.
+`hdlfmtr` ships its own Neovim plugin layer. The `build` hook compiles
+the Rust binary at install time and the Lua module knows where to find
+it afterwards.
 
 ```lua
 {
@@ -109,45 +158,54 @@ module knows where to find it afterwards.
       align_declarations = true,    -- vertically align port/signal lists
       case_branch_indent = true,    -- indent case `when` branch bodies
       sort_use_clauses   = true,    -- sort consecutive `use` clauses
+      stylish_blank_lines = true,   -- blank lines between processes
+      lint               = true,    -- emit diagnostics to vim.diagnostic
 
       -- Editor integration.
       register_with_conform = true,  -- register the formatter def
       auto_register_vhdl    = false, -- also add to formatters_by_ft.vhdl
       set_buffer_options    = true,  -- match nvim tabstop/shiftwidth
-                                     -- to indent_width on vhdl buffers
     })
   end,
 }
 ```
 
-**Prerequisite:** a Rust toolchain (`cargo` on PATH). Prebuilt binaries
-are on the roadmap; until then `cargo build --release` runs once at
-install time. After install you also get:
+After install you get:
 
-- `:HdlFmt` - format the current buffer.
-- `require("hdlfmtr").format_buffer(bufnr)` - programmatic API.
-- `require("hdlfmtr").binary()` - absolute path to the bundled binary,
-  in case you need it for tooling.
+- `:HdlFmt` - format the current buffer
+- `require("hdlfmtr").format_buffer(bufnr)` - programmatic API
+- `require("hdlfmtr").binary()` - absolute path to the bundled binary
+- Lint diagnostics in the gutter / virtual text / `]d` / `[d` navigation
 
 ### Setup options
 
-| Option                  | Default   | Description                                                                                                                                                                                     |
-| ----------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `indent_style`          | `"tabs"`  | `"tabs"`, `"spaces"`, or `"preserve"` to skip the indent pass entirely.                                                                                                                         |
-| `indent_width`          | `4`       | When `indent_style = "spaces"`, the number of spaces per level. When `"tabs"`, the tabstop / shiftwidth applied to vhdl buffers (cosmetic).                                                     |
-| `keyword_case`          | `"lower"` | `"lower"`, `"upper"`, or `"preserve"`. Identifiers are never touched, except for a small allowlist of predefined names (`std_logic`, `bit_vector`, `integer`, `ieee`, ...).                     |
-| `align_declarations`    | `true`    | Vertically align consecutive port / signal / variable / constant declaration lines so that names, `:`, modes, types, and trailing comments line up in columns.                                  |
-| `case_branch_indent`    | `true`    | Inside `case` statements, indent the body of each `when` branch one level deeper than the `when` keyword itself. The other style (`when` and body at the same depth) is reachable with `false`. |
-| `sort_use_clauses`      | `true`    | Alphabetically sort consecutive `use X.Y.Z;` lines. `library` clauses are never reordered.                                                                                                      |
-| `register_with_conform` | `true`    | Register `hdlfmtr` as a conform.nvim formatter definition (no effect if conform is not loaded).                                                                                                 |
-| `auto_register_vhdl`    | `false`   | Also prepend `hdlfmtr` to `conform.formatters_by_ft.vhdl`. Set this if you want a true zero-config install.                                                                                     |
-| `set_buffer_options`    | `true`    | On entering a vhdl buffer, set `tabstop`, `softtabstop`, `shiftwidth`, `expandtab` to match the formatter config. Disable if you manage these yourself.                                         |
+| Option | Default | Description |
+| --- | --- | --- |
+| `indent_style` | `"tabs"` | `"tabs"`, `"spaces"`, or `"preserve"` |
+| `indent_width` | `4` | Spaces per level, or tabstop hint for tabs |
+| `keyword_case` | `"lower"` | `"lower"`, `"upper"`, or `"preserve"`. Predefined identifiers (`std_logic`, `ieee`, ...) are also folded. |
+| `align_declarations` | `true` | Align port / signal / variable / constant / generic / record-field / port-map / aggregate lines |
+| `case_branch_indent` | `true` | Extra indent for case `when` branch bodies |
+| `sort_use_clauses` | `true` | Sort consecutive `use` clauses, group by library |
+| `stylish_blank_lines` | `true` | Insert blank line between top-level statements |
+| `lint` | `true` | Run lint checks and push diagnostics to `vim.diagnostic` |
+| `register_with_conform` | `true` | Register `hdlfmtr` as a conform.nvim formatter definition |
+| `auto_register_vhdl` | `false` | Also prepend to `conform.formatters_by_ft.vhdl` |
+| `set_buffer_options` | `true` | Set buffer-local `tabstop` / `shiftwidth` / `expandtab` on vhdl files |
+
+### VS Code
+
+The VS Code extension bundles a WASM build of the formatter - no
+external binary required. Install from the Marketplace or a `.vsix`
+file, and it works immediately.
+
+Settings are exposed under the `hdlfmtr.*` prefix in VS Code settings.
+See `editors/vscode/README.md` for details.
 
 ### Neovim - manual conform.nvim wiring
 
-If you don't want the plugin layer and prefer to install `hdlfmtr` as
-a system binary (`cargo install --path .`), point conform.nvim at it
-directly:
+If you prefer to install `hdlfmtr` as a system binary and wire it
+manually:
 
 ```lua
 require("conform").setup({
@@ -167,75 +225,48 @@ require("conform").formatters.hdlfmtr = {
 }
 ```
 
-### Composing with vsg
-
-While hdlfmtr's pretty-printer is still being built, you may want to
-run both: hdlfmtr first to fix the labels vsg refuses to fix, then vsg
-for its full set of style rewrites. With conform.nvim:
-
-```lua
-formatters_by_ft = {
-  vhdl = { "hdlfmtr", "vsg" },
-}
-```
-
-This pipes the file through hdlfmtr first, then vsg. Because hdlfmtr's
-output satisfies vsg's `process_016` and `process_018`, vsg no longer
-bails out and writes its formatted result back as expected.
-
 ## Why a new formatter
 
-VHDL tooling is sparse. The de-facto VHDL formatter is `vsg`
-(VHDL Style Guide), which is Python-based, has a slow cold-start, and
-refuses to write output when it sees rules it cannot auto-fix - even
-if those rules are trivially fixable in principle. The result is that
+VHDL tooling is sparse. The de-facto VHDL formatter (`vsg` / VHDL
+Style Guide) is Python-based, has a slow cold-start, and refuses to
+write output when it sees rules it cannot auto-fix. The result is that
 editor format-on-save flows time out or silently drop fixes.
 
 hdlfmtr exists to provide:
 
-1. **Editor-grade startup time.** A Rust binary starts in
-   single-digit milliseconds. There is no Python import cost, no node
-   process, no JIT warmup. Format-on-save will not time out.
-2. **A robust write contract.** hdlfmtr always produces output. If a
-   pass cannot improve the source, the source is returned unchanged.
-   It does not "succeed" by writing nothing.
-3. **A single static binary.** Drop it in `~/.local/bin`, distribute
-   it via Mason, brew, AUR, or vendor it into a CI image. No runtime
-   to install.
+1. **Editor-grade startup time.** ~2 ms per invocation. No Python, no
+   Node, no JIT warmup.
+2. **A robust write contract.** Always produces output. Never
+   "succeeds" by writing nothing.
+3. **Cross-platform distribution.** Single static binary for CLI
+   users, WASM bundle for VS Code, cargo build for Neovim.
+4. **Integrated linting.** Catches real hardware bugs (latches,
+   sensitivity-list mismatches, multiple drivers, unused signals)
+   alongside formatting, surfaced in-editor as diagnostics.
 
 ## Roadmap
 
-The plan is to grow each pass on the same token stream, so that the
-public `format` API stays stable as the implementation deepens.
-
-- [x] **Lexer.** Complete VHDL-2008 token stream with case-insensitive
-      keyword recognition, comment and string handling, character
-      literal vs. attribute-tick disambiguation, bit-string and based
-      literals.
-- [x] **Process-label insertion** (`process_016`, `process_018`),
-      including `postponed process`, `process_018` in isolation, and
-      collision-safe synthetic names.
-- [x] **Indent normalization.** Tab-default, spaces-configurable.
-      Stack-based depth tracking across structural blocks and
-      multi-line parens.
-- [x] **Case-statement `when` indenting.** Configurable.
-- [x] **Keyword case folding.** Lower / upper / preserve, with
-      predefined identifier folding for `std_logic`, `bit_vector`,
-      `ieee`, and friends.
-- [x] **Vertical alignment of port / signal / variable declarations.**
-- [x] **Use-clause sorting.**
-- [x] **Trailing-whitespace removal & final-newline.**
-- [ ] **Continuation indentation** for expressions that span multiple
-      lines. Needs lightweight expression parsing.
-- [ ] **Comment reflow** for long line and block comments.
-- [ ] **Configuration file** (`hdlfmtr.toml`) with the
-      `cli > project > home > defaults` precedence order.
-- [ ] **Range formatting** for editor "format selection" commands.
-- [ ] **Prebuilt release binaries** via GitHub Releases.
-- [ ] **Mason package recipe** (depends on releases).
-- [ ] **Full parser + Wadler-style pretty-printer.** When the rewrite
-      passes have outgrown what a token-stream rewriter can do
-      reliably, switch the engine. Not on the immediate horizon.
+- [x] Lexer (VHDL-2008 token stream)
+- [x] Process-label insertion (with collision detection, postponed, process_018)
+- [x] Indent normalization (tabs/spaces, case-when branches)
+- [x] Keyword + predefined identifier case folding
+- [x] Operator / colon / comma / keyword-paren spacing
+- [x] Paren padding removal
+- [x] Vertical alignment (ports, signals, generics, records, port maps, aggregates, when branches)
+- [x] Concatenation and conditional-assignment alignment
+- [x] Library + use-clause sorting with grouping
+- [x] Numeric literal formatting
+- [x] Stylish blank lines + blank-line collapse
+- [x] Trailing-whitespace removal + final-newline
+- [x] 9 lint checks with Neovim + VS Code diagnostic integration
+- [x] VS Code extension with bundled WASM (no external binary needed)
+- [ ] Per-line lint suppression (`-- hdlfmtr: ignore <code>`)
+- [ ] Continuation indentation for multi-line expressions
+- [ ] Comment reflow
+- [ ] Configuration file (`hdlfmtr.toml`)
+- [ ] Range formatting
+- [ ] Prebuilt release binaries via GitHub Releases
+- [ ] Mason package recipe
 
 ## License
 

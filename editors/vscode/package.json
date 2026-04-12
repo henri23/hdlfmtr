@@ -1,0 +1,93 @@
+{
+  "name": "hdlfmtr",
+  "displayName": "hdlfmtr - VHDL Formatter",
+  "description": "A fast VHDL formatter and linter. Formats on save, aligns declarations, normalizes spacing, and surfaces lint warnings in the Problems panel.",
+  "version": "0.4.0",
+  "publisher": "HenriHaka",
+  "icon": "images/logo.png",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/henri23/hdlfmtr"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Formatters",
+    "Linters"
+  ],
+  "keywords": [
+    "vhdl",
+    "hdl",
+    "fpga",
+    "formatter",
+    "linter"
+  ],
+  "activationEvents": [
+    "onLanguage:vhdl"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "hdlfmtr",
+      "properties": {
+        "hdlfmtr.indentStyle": {
+          "type": "string",
+          "enum": ["tabs", "spaces", "preserve"],
+          "default": "tabs",
+          "description": "Indentation style."
+        },
+        "hdlfmtr.indentWidth": {
+          "type": "number",
+          "default": 4,
+          "description": "Width of one indent level (spaces per level, or tabstop hint for tabs)."
+        },
+        "hdlfmtr.keywordCase": {
+          "type": "string",
+          "enum": ["lower", "upper", "preserve"],
+          "default": "lower",
+          "description": "Case to apply to VHDL reserved words."
+        },
+        "hdlfmtr.alignDeclarations": {
+          "type": "boolean",
+          "default": true,
+          "description": "Vertically align consecutive port / signal / variable declarations."
+        },
+        "hdlfmtr.caseBranchIndent": {
+          "type": "boolean",
+          "default": true,
+          "description": "Indent case-statement `when` branch bodies one extra level."
+        },
+        "hdlfmtr.sortUseClauses": {
+          "type": "boolean",
+          "default": true,
+          "description": "Sort consecutive `use` clauses alphabetically."
+        },
+        "hdlfmtr.lint": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run lint checks and show warnings in the Problems panel."
+        }
+      }
+    },
+    "languages": [
+      {
+        "id": "vhdl",
+        "extensions": [".vhd", ".vhdl"],
+        "aliases": ["VHDL"]
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc",
+    "watch": "tsc -w",
+    "package": "npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "@vscode/vsce": "^3.0.0"
+  }
+}

@@ -4,43 +4,50 @@ All notable changes to `hdlfmtr` are documented in this file. The
 format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0] - 2026-04-12
 
 ### Added
+- **VS Code extension** with bundled WASM binary. No Rust toolchain
+  required for VS Code users - the extension works cross-platform out
+  of the box. Available on the Visual Studio Marketplace.
 - **Vertical alignment of declaration lines.** Consecutive port,
   generic, signal, variable, constant, and record-field declarations
-  with the same indent and shape (mode-bearing or not) now have their
-  names, `:` separators, mode keywords, types, and trailing comments
-  aligned in columns. Disable with `--no-align` (CLI) or
-  `align_declarations = false` (lazy.nvim setup).
-- **Predefined identifier folding.** The case-folding pass now also
-  folds the case of `std_logic`, `std_logic_vector`, `signed`,
-  `unsigned`, `integer`, `natural`, `positive`, `real`, `time`,
-  `boolean`, `bit`, `bit_vector`, `character`, `string`, `ieee`,
-  `std`, and `work`. User-defined identifiers are still untouched.
-- **Use-clause sorting.** Consecutive `use X.Y.Z;` lines are sorted
-  alphabetically. Disable with `--no-sort-uses` or
-  `sort_use_clauses = false`. Library clauses are not reordered.
-- **Case-statement `when` indenting.** `when` branches inside a
-  `case` statement now indent their bodies one extra level. Disable
-  with `--no-case-branch-indent` or `case_branch_indent = false`.
-- **Process label collision detection.** Synthetic `u_process_N`
-  labels skip any name already used as an identifier elsewhere in
-  the source.
-- **`postponed process` recognition.** A labeled `postponed process`
-  is correctly detected as already-labeled.
-- **`process_018` in isolation.** A labeled process whose
-  `end process` doesn't repeat the label still gets the label
-  inserted on the closing line.
+  aligned in columns. Also handles component port maps (`name => signal`),
+  multi-line aggregates, and case `when` branches.
+- **Predefined identifier folding.** `std_logic`, `std_logic_vector`,
+  `signed`, `unsigned`, `integer`, `ieee`, and friends are folded
+  alongside reserved words.
+- **Use-clause sorting** with blank-line grouping between libraries.
+- **Library clause sorting.**
+- **Case-statement `when` indenting** (configurable).
+- **Operator spacing** for `:`, `:=`, `<=`, `=>`, `/=`, `>=`, `**`.
+- **Colon spacing** for label separators.
+- **Comma spacing** normalization.
+- **Keyword-paren spacing** - `process(clk)` -> `process (clk)`,
+  same for `port`, `generic`, `port map`, `generic map`.
+- **Paren padding removal** - strips whitespace inside `(...)`.
+- **Numeric literal formatting** - underscore grouping, hex uppercase.
+- **Concatenation continuation alignment** for `& foo` lines.
+- **Conditional assignment alignment** for `when ... else` chains.
+- **Single-line collapse** for trivially-empty constructs (opt-in).
+- **Stylish blank line insertion** between top-level statements.
+- **Blank-line collapse** (3+ -> 1).
+- **9 lint checks** with Neovim `vim.diagnostic` and VS Code Problems
+  panel integration: `unused_001`-`004`, `sens_001`, `clock_001`,
+  `driver_001`, `latch_001`, `reset_001`.
+- **Process label collision detection** - synthetic names skip
+  existing identifiers.
+- **`postponed process` recognition.**
+- **`process_018` in isolation** - labeled process with unlabeled
+  `end process` gets the label added.
+- CLI flags: `--no-align`, `--no-case-branch-indent`, `--no-sort-uses`,
+  `--no-stylish-blanks`, `--no-lint`, `--collapse-trivial`.
+- Neovim plugin options for all new features.
+- GitHub issue templates (bug report, feature request).
 
 ### Changed
-- `format(src)` is now `format(src, &Config)`. The configuration
-  struct gained `align_declarations`, `case_branch_indent`, and
-  `sort_use_clauses` fields.
-- The CLI gained `--no-align`, `--no-case-branch-indent`, and
-  `--no-sort-uses` flags.
-- The lazy.nvim plugin's `setup()` accepts the corresponding options
-  and forwards them as CLI flags.
+- `format(src)` is now `format(src, &Config)`.
+- Bumped version to 0.2.0.
 
 ## [0.1.0] - 2026-04-11
 
@@ -51,13 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   disambiguation.
 - Process-label insertion (vsg `process_016` / `process_018`).
 - Keyword case folding with lower / upper / preserve.
-- Indent normalization with stack-based depth tracking, supporting
-  entity / architecture / package / process / function / procedure /
-  if-then-elsif-else / for-loop / while-loop / case / record /
-  block / generate constructs and multi-line parentheses.
+- Indent normalization with stack-based depth tracking.
 - Trailing-whitespace removal and final-newline normalization.
 - CLI: `hdlfmtr [FILE]`, `--check`, `--stdin-filepath`,
   `--indent-style`, `--indent-width`, `--keyword-case`.
 - Neovim plugin (`lua/hdlfmtr/`) with conform.nvim auto-registration,
-  buffer-option autocommand, `:HdlFmt` user command, and a
-  programmatic `format_buffer` API.
+  buffer-option autocommand, `:HdlFmt` user command.
