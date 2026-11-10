@@ -305,10 +305,14 @@ fn update_depth(
         }
         TokenKind::Keyword(Keyword::Loop) => {
             // for/while/loop. Opens unconditionally.
-            *depth += 1;
+            if !preceded_by_end_in_line(line, idx_in_line) {
+                *depth += 1;
+            }
         }
         TokenKind::Keyword(Keyword::Generate) => {
-            *depth += 1;
+            if !preceded_by_end_in_line(line, idx_in_line) {
+                *depth += 1;
+            }
         }
         TokenKind::Keyword(Keyword::Record | Keyword::Block) => {
             if !preceded_by_end_in_line(line, idx_in_line) {
@@ -555,6 +559,44 @@ package p is
     b : std_logic;
   end record;
 end package;
+";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn loop_generate_respect_end() {
+        let src = "\
+architecture rtl of t is
+begin
+if true generate
+end generate;
+
+process
+begin
+for i in 0 to 1 loop
+end loop;
+end process proc;
+
+forgen : for i in 0 to 1 generate
+end generate forgen;
+end architecture rtl;
+";
+        let out = fmt_spaces(src, 2);
+        let expected = "\
+architecture rtl of t is
+begin
+  if true generate
+  end generate;
+
+  process
+  begin
+    for i in 0 to 1 loop
+    end loop;
+  end process proc;
+
+  forgen : for i in 0 to 1 generate
+  end generate forgen;
+end architecture rtl;
 ";
         assert_eq!(out, expected);
     }
