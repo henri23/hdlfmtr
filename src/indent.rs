@@ -305,10 +305,14 @@ fn update_depth(
         }
         TokenKind::Keyword(Keyword::Loop) => {
             // for/while/loop. Opens unconditionally.
-            *depth += 1;
+            if !preceded_by_end_in_line(line, idx_in_line) {
+                *depth += 1;
+            }
         }
         TokenKind::Keyword(Keyword::Generate) => {
-            *depth += 1;
+            if !preceded_by_end_in_line(line, idx_in_line) {
+                *depth += 1;
+            }
         }
         TokenKind::Keyword(Keyword::Record | Keyword::Block) => {
             if !preceded_by_end_in_line(line, idx_in_line) {
