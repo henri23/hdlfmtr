@@ -562,4 +562,42 @@ end package;
 ";
         assert_eq!(out, expected);
     }
+
+    #[test]
+    fn loop_generate_respect_end() {
+        let src = "\
+architecture rtl of t is
+begin
+if true generate
+end generate;
+
+process
+begin
+for i in 0 to 1 loop
+end loop;
+end process proc;
+
+forgen : for i in 0 to 1 generate
+end generate forgen;
+end architecture rtl;
+";
+        let out = fmt_spaces(src, 2);
+        let expected = "\
+architecture rtl of t is
+begin
+  if true generate
+  end generate;
+
+  process
+  begin
+    for i in 0 to 1 loop
+    end loop;
+  end process proc;
+
+  forgen : for i in 0 to 1 generate
+  end generate forgen;
+end architecture rtl;
+";
+        assert_eq!(out, expected);
+    }
 }
