@@ -259,7 +259,7 @@ fn update_depth(
             }
         }
         TokenKind::Keyword(
-            Keyword::Entity | Keyword::Architecture | Keyword::Package,
+            Keyword::Entity | Keyword::Architecture | Keyword::Package | Keyword::View,
         ) => {
             // Skip if this is part of `end <kw>` — `end` is the
             // previous significant token in the line OR earlier.
@@ -554,6 +554,48 @@ package p is
     a : std_logic;
     b : std_logic;
   end record;
+end package;
+";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn multiple_record_views() {
+        let src = "\
+package p is
+type r is record
+a : std_logic;
+b : std_logic;
+end record;
+
+view i of r is
+a : in;
+b : in;
+end view;
+
+view o of r is
+a : out;
+b : out;
+end view;
+end package;
+";
+        let out = fmt_spaces(src, 2);
+        let expected = "\
+package p is
+  type r is record
+    a : std_logic;
+    b : std_logic;
+  end record;
+
+  view i of r is
+    a : in;
+    b : in;
+  end view;
+
+  view o of r is
+    a : out;
+    b : out;
+  end view;
 end package;
 ";
         assert_eq!(out, expected);
