@@ -91,6 +91,7 @@ pub enum Keyword {
     Process,
     Record,
     Then,
+    View,
     When,
     While,
 }
@@ -137,6 +138,7 @@ fn classify_ident(s: &str) -> Option<TokenKind> {
         b"process" => TokenKind::Keyword(Keyword::Process),
         b"record" => TokenKind::Keyword(Keyword::Record),
         b"then" => TokenKind::Keyword(Keyword::Then),
+        b"view" => TokenKind::Keyword(Keyword::View),
         b"when" => TokenKind::Keyword(Keyword::When),
         b"while" => TokenKind::Keyword(Keyword::While),
 
