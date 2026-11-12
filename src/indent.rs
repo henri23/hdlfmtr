@@ -259,7 +259,7 @@ fn update_depth(
             }
         }
         TokenKind::Keyword(
-            Keyword::Entity | Keyword::Architecture | Keyword::Package,
+            Keyword::Entity | Keyword::Architecture | Keyword::Package | Keyword::Component,
         ) => {
             // Skip if this is part of `end <kw>` — `end` is the
             // previous significant token in the line OR earlier.
@@ -554,6 +554,36 @@ package p is
     a : std_logic;
     b : std_logic;
   end record;
+end package;
+";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn nested_component_in_package() {
+        let src = "\
+package p is
+component c is
+generic (
+a : std_logic
+);
+port (
+b : std_logic
+);
+end component;
+end package;
+";
+        let out = fmt_spaces(src, 2);
+        let expected = "\
+package p is
+  component c is
+    generic (
+      a : std_logic
+    );
+    port (
+      b : std_logic
+    );
+  end component;
 end package;
 ";
         assert_eq!(out, expected);
