@@ -76,6 +76,7 @@ pub enum Keyword {
     Begin,
     Block,
     Case,
+    Component,
     Else,
     Elsif,
     End,
@@ -122,6 +123,7 @@ fn classify_ident(s: &str) -> Option<TokenKind> {
         b"begin" => TokenKind::Keyword(Keyword::Begin),
         b"block" => TokenKind::Keyword(Keyword::Block),
         b"case" => TokenKind::Keyword(Keyword::Case),
+        b"component" => TokenKind::Keyword(Keyword::Component),
         b"else" => TokenKind::Keyword(Keyword::Else),
         b"elsif" => TokenKind::Keyword(Keyword::Elsif),
         b"end" => TokenKind::Keyword(Keyword::End),
@@ -157,7 +159,6 @@ fn classify_ident(s: &str) -> Option<TokenKind> {
         | b"body"
         | b"buffer"
         | b"bus"
-        | b"component"
         | b"configuration"
         | b"constant"
         | b"context"
