@@ -19,7 +19,7 @@
 //!   • a change of shape (a mode-bearing port immediately followed by
 //!     a mode-less signal does NOT get aligned together).
 
-use crate::lexer::{Token, TokenKind, tokenize};
+use crate::lexer::{Keyword, Token, TokenKind, tokenize};
 
 pub fn align_declarations(src: &str) -> String {
     let tokens = tokenize(src);
@@ -106,7 +106,7 @@ impl ParsedLine {
     }
 }
 
-const MODE_KEYWORDS: &[&str] = &["in", "out", "inout", "buffer", "linkage"];
+const MODE_KEYWORDS: &[&str] = &["in", "out", "inout", "buffer", "linkage", "view"];
 
 fn parse_line(line: &[Token], src: &str) -> Option<ParsedLine> {
     // Skip leading whitespace.
@@ -167,9 +167,9 @@ fn parse_line(line: &[Token], src: &str) -> Option<ParsedLine> {
     // not declarations. Only relevant for Colon-separator lines; arrow
     // lines can never be statement labels.
     if separator == Sep::Colon
-        && let Some(after) = next_significant_text(line, sep_pos + 1, src)
+        && let Some(after) = next_significant_token(line, sep_pos + 1)
     {
-        let lower = after.to_ascii_lowercase();
+        let lower = after.text(src).to_ascii_lowercase();
         if matches!(
             lower.as_str(),
             "process"
@@ -190,7 +190,12 @@ fn parse_line(line: &[Token], src: &str) -> Option<ParsedLine> {
     while k < line.len() && line[k].kind == TokenKind::Whitespace {
         k += 1;
     }
-    let mode = if separator == Sep::Colon && k < line.len() && is_mode_keyword(&line[k], src) {
+    // Only consider mode when it is not followed by a semicolon (special case for view decls)
+    let mode = if separator == Sep::Colon
+        && k < line.len()
+        && is_mode_keyword(&line[k], src)
+        && next_significant_token(line, k + 1).is_none_or(|tok| tok.kind != TokenKind::Semi)
+    {
         let m = line[k].text(src).to_string();
         k += 1;
         Some(m)
@@ -252,21 +257,17 @@ fn parse_line(line: &[Token], src: &str) -> Option<ParsedLine> {
 }
 
 fn is_mode_keyword(tok: &Token, src: &str) -> bool {
-    if !matches!(tok.kind, TokenKind::Reserved | TokenKind::Ident) {
+    if !matches!(tok.kind, TokenKind::Reserved | TokenKind::Keyword(Keyword::View) | TokenKind::Ident) {
         return false;
     }
     let lower = tok.text(src).to_ascii_lowercase();
     MODE_KEYWORDS.contains(&lower.as_str())
 }
 
-fn next_significant_text<'a>(
-    line: &'a [Token],
-    from: usize,
-    src: &'a str,
-) -> Option<&'a str> {
+fn next_significant_token<'a>(line: &'a [Token], from: usize) -> Option<&'a Token> {
     for tok in &line[from..] {
         if !tok.is_trivia() {
-            return Some(tok.text(src));
+            return Some(tok);
         }
     }
     None
@@ -606,6 +607,48 @@ end t;
 \tb : in std_logic;
 \t\tx  : in std_logic;
 \t\tyy : in std_logic;
+";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn view_is_a_mode() {
+        let src = "\
+\ti : in std_logic;
+\to : out std_logic;
+\tio : inout std_logic;
+\tslave : view slave;
+\tmaster : view master;
+";
+        let out = align_declarations(src);
+        // Views align with other modes in the same group
+        let expected = "\
+\ti      : in    std_logic;
+\to      : out   std_logic;
+\tio     : inout std_logic;
+\tslave  : view  slave;
+\tmaster : view  master;
+";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn aligns_view_declaration() {
+        let src = "\
+\tview v of r is
+\t\tinput : in;
+\t\toutput : out;
+\t\tio : inout;
+\tend view;
+";
+        let out = align_declarations(src);
+        // Modes followed by semicolon do not trigger semicolon alignment
+        let expected = "\
+\tview v of r is
+\t\tinput  : in;
+\t\toutput : out;
+\t\tio     : inout;
+\tend view;
 ";
         assert_eq!(out, expected);
     }
